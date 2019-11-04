@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="Mesh class completed">
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gendrrom_sandbox.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gendrrom_sandbox.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/poisson_fem/mesh/Mesh.py" beforeDir="false" afterPath="$PROJECT_DIR$/poisson_fem/mesh/Mesh.py" afterDir="false" />
@@ -25,6 +26,7 @@
   </component>
   <component name="ProjectId" id="1T8y7z9SDEaUm3ph2lyRKelfQ9k" />
   <component name="PropertiesComponent">
+    <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
     <property name="WebServerToolWindowFactoryState" value="false" />
     <property name="last_opened_file_path" value="$PROJECT_DIR$" />
     <property name="nodejs_interpreter_path.stuck_in_default_project" value="undefined stuck path" />
@@ -157,7 +159,7 @@
       <updated>1572540058641</updated>
       <workItem from="1572855855629" duration="53000" />
       <workItem from="1572855947684" duration="4624000" />
-      <workItem from="1572860884417" duration="2595000" />
+      <workItem from="1572860884417" duration="7427000" />
     </task>
     <task id="LOCAL-00001" summary="Mesh class completed">
       <created>1572860574535</created>

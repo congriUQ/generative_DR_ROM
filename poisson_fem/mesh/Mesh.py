@@ -2,11 +2,12 @@
 from matplotlib import pyplot as plt
 import numpy as np
 
-class Mesh():
-    def __init__(self, vertices=[], edges=[], cells=[]):
-        self.__vertices = vertices
-        self.__edges = edges
-        self.__cells = cells
+
+class Mesh:
+    def __init__(self):
+        self._vertices = []
+        self._edges = []
+        self.__cells = []
         self._nVertices = 0
         self._nEdges = 0
         self.nCells = 0
@@ -14,19 +15,19 @@ class Mesh():
     def createVertex(self, coordinates):
         # Creates a vertex and appends it to vertex list
         vtx = Vertex(coordinates)
-        self.__vertices.append(vtx)
+        self._vertices.append(vtx)
         self._nVertices += 1
 
     def createEdge(self, vtx0, vtx1):
         # Creates an edge between vertices specified by vertex indices and adds it to edge list
         edg = Edge(vtx0, vtx1)
-        self.__edges.append(edg)
+        self._edges.append(edg)
 
         # Link edges to vertices
         vtx0.addEdge(edg)
         vtx1.addEdge(edg)
 
-        self.nEdges += 1
+        self._nEdges += 1
 
     def createCell(self, vertices, edges):
         # Creates a cell and appends it to cell list
@@ -44,33 +45,42 @@ class Mesh():
         self.nCells += 1
 
     def plot(self):
-        for vtx in self.__vertices:
+        n = 0
+        for vtx in self._vertices:
             if vtx is not None:
-                vtx.plot()
+                vtx.plot(n)
+                n += 1
 
-        for edg in self.__edges:
+        n = 0
+        for edg in self._edges:
             if edg is not None:
-                edg.plot()
+                edg.plot(n)
+                n += 1
 
         # plot cell number into cell
         n = 0
         for cll in self.__cells:
             if cll is not None:
-                plt.text(cll.__centroid[0], cll.__centroid[1], str(n))
+                plt.text(cll.centroid[0], cll.centroid[1], str(n))
             n += 1
+
+        plt.xlabel('x')
+        plt.ylabel('y')
 
 
 class RectangularMesh(Mesh):
     def __init__(self, gridX, gridY=None):
-        # Grid vectors gridX, gridY span the rectangular mesh
+        # Grid vectors gridX, gridY give the edge lengths
+
+        super().__init__()
         if gridY is None:
             gridY = gridX
 
         # Create vertices
-        xCoord = np.cumsum(gridX)
-        yCoord = np.cumsum(gridY)
-        for x in xCoord:
-            for y in yCoord:
+        xCoord = np.concatenate((np.array([.0]), np.cumsum(gridX)))
+        yCoord = np.concatenate((np.array([.0]), np.cumsum(gridY)))
+        for y in yCoord:
+            for x in xCoord:
                 self.createVertex(np.array([x, y]))
 
         # Create edges
@@ -78,19 +88,23 @@ class RectangularMesh(Mesh):
         ny = len(gridY) + 1
         for y in range(ny):
             for x in range(nx):
-                if self.__vertices[x + y*nx].coordinates[1] > 0:
-                    self.createEdge(self.__vertices[x + (y - 1)*nx], self.__vertices[x + y*nx])
+                if self._vertices[x + y*nx].coordinates[0] > 0:
+                    self.createEdge(self._vertices[x + y*nx - 1], self._vertices[x + y*nx])
+        for y in range(ny):
+            for x in range(nx):
+                if self._vertices[x + y*nx].coordinates[1] > 0:
+                    self.createEdge(self._vertices[x + (y - 1)*nx], self._vertices[x + y*nx])
 
         # Create cells
         nx -= 1
         ny -= 1
-        n = 0 # cell index
+        n = 0   # cell index
         for y in range(ny):
             for x in range(nx):
-                vtx = [self.__vertices[x + y*(nx + 1)], self.__vertices[x + y*(nx + 1) + 1],
-                       self.__vertices[x + (y + 1)*(nx + 1) + 1], self.__vertices[x + (y + 1)*(nx + 1)]]
-                edg = [self.__edges[n], self.__edges[nx*(ny + 1) + n + y + 1], self.__edges[n + nx],
-                       self.__edges[nx*(ny + 1) + n + y]]
+                vtx = [self._vertices[x + y*(nx + 1)], self._vertices[x + y*(nx + 1) + 1],
+                       self._vertices[x + (y + 1)*(nx + 1) + 1], self._vertices[x + (y + 1)*(nx + 1)]]
+                edg = [self._edges[n], self._edges[nx*(ny + 1) + n + y + 1], self._edges[n + nx],
+                       self._edges[nx*(ny + 1) + n + y]]
                 self.createCell(vtx, edg)
                 n += 1
 
@@ -98,43 +112,45 @@ class RectangularMesh(Mesh):
 class Cell:
     def __init__(self, vertices, edges):
         # Vertices and edges must be sorted according to local vertex/edge number!
-        self.__vertices = vertices
-        self.__edges = edges
-        self.__centroid = []
+        self._vertices = vertices
+        self._edges = edges
+        self.centroid = []
         self.computeCentroid()
 
     def computeCentroid(self):
         # Compute cell centroid
-        self.__centroid = np.zeros(2)
-        for vtx in self.__vertices:
-            self.__centroid += vtx.coordinates
-        self.__centroid /= len(self.__vertices)
+        self.centroid = np.zeros(2)
+        for vtx in self._vertices:
+            self.centroid += vtx.coordinates
+        self.centroid /= len(self._vertices)
 
     def deleteEdges(self, indices):
         # Deletes edges according to indices by setting them to None
         for i in indices:
-            self.__edges[i] = None
+            self._edges[i] = None
 
     def inside(self, x):
         # Checks if point x is inside of cell
-        return (self.__vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
-                <= self.__vertices[2].coordinates[0] + np.finfo(float).eps and
-                self.__vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
-                <= self.__vertices[2].coordinates[1] + np.finfo(float).eps)
+        return (self._vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
+                <= self._vertices[2].coordinates[0] + np.finfo(float).eps and
+                self._vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
+                <= self._vertices[2].coordinates[1] + np.finfo(float).eps)
 
 
 class Edge:
     def __init__(self, vtx0, vtx1):
-        self.__vertices = [vtx0, vtx1]
+        self._vertices = [vtx0, vtx1]
         self.__cells = []
         self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
 
     def addCell(self, cell):
         self.__cells.append(cell)
 
-    def plot(self):
-        plt.plot([self.__vertices[0].coordinates[0], self.__vertices[1].coordinates[0]],
-                 [self.__vertices[0].coordinates[1], self.__vertices[1].coordinates[1]], linewidth=.5, color='k')
+    def plot(self, n):
+        plt.plot([self._vertices[0].coordinates[0], self._vertices[1].coordinates[0]],
+                 [self._vertices[0].coordinates[1], self._vertices[1].coordinates[1]], linewidth=.5, color='r')
+        plt.text(.5*(self._vertices[0].coordinates[0] + self._vertices[1].coordinates[0]),
+                 .5*(self._vertices[0].coordinates[1] + self._vertices[1].coordinates[1]), str(n), color='r')
 
 
 class Vertex:
@@ -149,5 +165,6 @@ class Vertex:
     def addEdge(self, edge):
         self.edges.append(edge)
 
-    def plot(self):
+    def plot(self, n):
         p = plt.plot(self.coordinates[0], self.coordinates[1], 'bx', linewidth=2.0, markersize=8.0)
+        plt.text(self.coordinates[0], self.coordinates[1], str(n), color='b')
