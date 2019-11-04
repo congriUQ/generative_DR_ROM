@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="">
+    <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="Mesh class completed">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gendrrom_sandbox.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gendrrom_sandbox.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/poisson_fem/mesh/Mesh.py" beforeDir="false" afterPath="$PROJECT_DIR$/poisson_fem/mesh/Mesh.py" afterDir="false" />
@@ -156,8 +156,17 @@
       <option name="presentableId" value="Default" />
       <updated>1572540058641</updated>
       <workItem from="1572855855629" duration="53000" />
-      <workItem from="1572855947684" duration="4308000" />
+      <workItem from="1572855947684" duration="4624000" />
+      <workItem from="1572860884417" duration="2595000" />
     </task>
+    <task id="LOCAL-00001" summary="Mesh class completed">
+      <created>1572860574535</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1572860574535</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -175,5 +184,9 @@
         </entry>
       </map>
     </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Mesh class completed" />
+    <option name="LAST_COMMIT_MESSAGE" value="Mesh class completed" />
   </component>
 </project>

@@ -60,6 +60,41 @@ class Mesh():
             n += 1
 
 
+class RectangularMesh(Mesh):
+    def __init__(self, gridX, gridY=None):
+        # Grid vectors gridX, gridY span the rectangular mesh
+        if gridY is None:
+            gridY = gridX
+
+        # Create vertices
+        xCoord = np.cumsum(gridX)
+        yCoord = np.cumsum(gridY)
+        for x in xCoord:
+            for y in yCoord:
+                self.createVertex(np.array([x, y]))
+
+        # Create edges
+        nx = len(gridX) + 1
+        ny = len(gridY) + 1
+        for y in range(ny):
+            for x in range(nx):
+                if self.__vertices[x + y*nx].coordinates[1] > 0:
+                    self.createEdge(self.__vertices[x + (y - 1)*nx], self.__vertices[x + y*nx])
+
+        # Create cells
+        nx -= 1
+        ny -= 1
+        n = 0 # cell index
+        for y in range(ny):
+            for x in range(nx):
+                vtx = [self.__vertices[x + y*(nx + 1)], self.__vertices[x + y*(nx + 1) + 1],
+                       self.__vertices[x + (y + 1)*(nx + 1) + 1], self.__vertices[x + (y + 1)*(nx + 1)]]
+                edg = [self.__edges[n], self.__edges[nx*(ny + 1) + n + y + 1], self.__edges[n + nx],
+                       self.__edges[nx*(ny + 1) + n + y]]
+                self.createCell(vtx, edg)
+                n += 1
+
+
 class Cell:
     def __init__(self, vertices, edges):
         # Vertices and edges must be sorted according to local vertex/edge number!
@@ -86,6 +121,7 @@ class Cell:
                 <= self.__vertices[2].coordinates[0] + np.finfo(float).eps and
                 self.__vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
                 <= self.__vertices[2].coordinates[1] + np.finfo(float).eps)
+
 
 class Edge:
     def __init__(self, vtx0, vtx1):
