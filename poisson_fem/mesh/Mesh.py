@@ -5,9 +5,9 @@ import numpy as np
 
 class Mesh:
     def __init__(self):
-        self._vertices = []
+        self.vertices = []
         self._edges = []
-        self.__cells = []
+        self.cells = []
         self._nVertices = 0
         self._nEdges = 0
         self.nCells = 0
@@ -15,7 +15,7 @@ class Mesh:
     def createVertex(self, coordinates):
         # Creates a vertex and appends it to vertex list
         vtx = Vertex(coordinates)
-        self._vertices.append(vtx)
+        self.vertices.append(vtx)
         self._nVertices += 1
 
     def createEdge(self, vtx0, vtx1):
@@ -32,7 +32,7 @@ class Mesh:
     def createCell(self, vertices, edges):
         # Creates a cell and appends it to cell list
         cll = Cell(vertices, edges)
-        self.__cells.append(cll)
+        self.cells.append(cll)
 
         # Link cell to vertices
         for vtx in vertices:
@@ -46,7 +46,7 @@ class Mesh:
 
     def plot(self):
         n = 0
-        for vtx in self._vertices:
+        for vtx in self.vertices:
             if vtx is not None:
                 vtx.plot(n)
                 n += 1
@@ -59,7 +59,7 @@ class Mesh:
 
         # plot cell number into cell
         n = 0
-        for cll in self.__cells:
+        for cll in self.cells:
             if cll is not None:
                 plt.text(cll.centroid[0], cll.centroid[1], str(n))
             n += 1
@@ -69,11 +69,13 @@ class Mesh:
 
 
 class RectangularMesh(Mesh):
+    # Assuming a unit square domain
     def __init__(self, gridX, gridY=None):
         # Grid vectors gridX, gridY give the edge lengths
 
         super().__init__()
         if gridY is None:
+            # assume square mesh
             gridY = gridX
 
         # Create vertices
@@ -88,12 +90,12 @@ class RectangularMesh(Mesh):
         ny = len(gridY) + 1
         for y in range(ny):
             for x in range(nx):
-                if self._vertices[x + y*nx].coordinates[0] > 0:
-                    self.createEdge(self._vertices[x + y*nx - 1], self._vertices[x + y*nx])
+                if self.vertices[x + y*nx].coordinates[0] > 0:
+                    self.createEdge(self.vertices[x + y*nx - 1], self.vertices[x + y*nx])
         for y in range(ny):
             for x in range(nx):
-                if self._vertices[x + y*nx].coordinates[1] > 0:
-                    self.createEdge(self._vertices[x + (y - 1)*nx], self._vertices[x + y*nx])
+                if self.vertices[x + y*nx].coordinates[1] > 0:
+                    self.createEdge(self.vertices[x + (y - 1)*nx], self.vertices[x + y*nx])
 
         # Create cells
         nx -= 1
@@ -101,28 +103,82 @@ class RectangularMesh(Mesh):
         n = 0   # cell index
         for y in range(ny):
             for x in range(nx):
-                vtx = [self._vertices[x + y*(nx + 1)], self._vertices[x + y*(nx + 1) + 1],
-                       self._vertices[x + (y + 1)*(nx + 1) + 1], self._vertices[x + (y + 1)*(nx + 1)]]
+                vtx = [self.vertices[x + y*(nx + 1)], self.vertices[x + y*(nx + 1) + 1],
+                       self.vertices[x + (y + 1)*(nx + 1) + 1], self.vertices[x + (y + 1)*(nx + 1)]]
                 edg = [self._edges[n], self._edges[nx*(ny + 1) + n + y + 1], self._edges[n + nx],
                        self._edges[nx*(ny + 1) + n + y]]
                 self.createCell(vtx, edg)
                 n += 1
 
+        # minor stuff
+        self.nElX = len(gridX)
+        self.nElY = len(gridY)
+        self.nEl = self.nElX * self.nElY
+        self.shapeFunGradients = None
+        self.locStiffGrad = None
+
+    def compShapeFunGradMat(self):
+        # Computes shape function gradient matrices B, see Fish & Belytshko
+
+        # Gauss quadrature points
+        xi0 = -1.0/np.sqrt(3)
+        xi1 = 1.0/np.sqrt(3)
+
+        self.shapeFunGradients = np.empty((8, 4, self.nEl))
+        for e in range(self.nEl):
+            # short hand notation
+            x0 = self.cells[e].vertices[0].coordinates[0]
+            x1 = self.cells[e].vertices[1].coordinates[0]
+            y0 = self.cells[e].vertices[0].coordinates[1]
+            y3 = self.cells[e].vertices[3].coordinates[1]
+
+            # coordinate transformation
+            xI = .5*(x0 + x1) + .5*xi0*(x1 - x0)
+            xII = .5*(x0 + x1) + .5*xi1*(x1 - x0)
+            yI = .5*(y0 + y3) + .5*xi0*(y3 - y0)
+            yII = .5*(y0 + y3) + .5*xi1*(y3 - y0)
+
+            # B matrices for bilinear shape functions
+            B0 = np.array([[yI - y3, y3 - yI, yI - y0, y0 - yI], [xI - x1, x0 - xI, xI - x0, x1 - xI]])
+            B1 = np.array([[yII - y3, y3 - yII, yII - y0, y0 - yII], [xII - x1, x0 - xII, xII - x0, x1 - xII]])
+            B2 = np.array([[yI - y3, y3 - yI, yI - y0, y0 - yI], [xII - x1, x0 - xII, xII - x0, x1 - xII]])
+            B3 = np.array([[yII - y3, y3 - yII, yII - y0, y0 - yII], [xI - x1, x0 - xI, xI - x0, x1 - xI]])
+
+            # Note:in Gauss quadrature, the differential transforms as dx = (l_x/2) d xi. Hence we take the
+            # additional factor of sqrt(A)/2 onto B
+            self.shapeFunGradients[:, :, e] = (1/(2*np.sqrt(self.cells[e].surface)))*np.concatenate((B0, B1, B2, B3))
+
+    def compLocStiffGrad(self):
+        # Compute local stiffness matrix gradients w.r.t. diffusivities
+
+        if self.shapeFunGradients is None:
+            self.compShapeFunGradMat()
+
+        self.locStiffGrad = np.empty((4, 4, self.nEl))
+        for e in range(self.nEl):
+            self.locStiffGrad[:, :, e] = \
+                np.transpose(self.shapeFunGradients[:, :, e]) @ self.shapeFunGradients[:, :, e]
+
+    def compGlobStiffStencil(self):
+        # tbd
+        pass
+
 
 class Cell:
     def __init__(self, vertices, edges):
         # Vertices and edges must be sorted according to local vertex/edge number!
-        self._vertices = vertices
+        self.vertices = vertices
         self._edges = edges
         self.centroid = []
         self.computeCentroid()
+        self.surface = self._edges[0].length*self._edges[1].length
 
     def computeCentroid(self):
         # Compute cell centroid
         self.centroid = np.zeros(2)
-        for vtx in self._vertices:
+        for vtx in self.vertices:
             self.centroid += vtx.coordinates
-        self.centroid /= len(self._vertices)
+        self.centroid /= len(self.vertices)
 
     def deleteEdges(self, indices):
         # Deletes edges according to indices by setting them to None
@@ -131,26 +187,26 @@ class Cell:
 
     def inside(self, x):
         # Checks if point x is inside of cell
-        return (self._vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
-                <= self._vertices[2].coordinates[0] + np.finfo(float).eps and
-                self._vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
-                <= self._vertices[2].coordinates[1] + np.finfo(float).eps)
+        return (self.vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
+                <= self.vertices[2].coordinates[0] + np.finfo(float).eps and
+                self.vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
+                <= self.vertices[2].coordinates[1] + np.finfo(float).eps)
 
 
 class Edge:
     def __init__(self, vtx0, vtx1):
-        self._vertices = [vtx0, vtx1]
-        self.__cells = []
+        self.vertices = [vtx0, vtx1]
+        self.cells = []
         self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
 
     def addCell(self, cell):
-        self.__cells.append(cell)
+        self.cells.append(cell)
 
     def plot(self, n):
-        plt.plot([self._vertices[0].coordinates[0], self._vertices[1].coordinates[0]],
-                 [self._vertices[0].coordinates[1], self._vertices[1].coordinates[1]], linewidth=.5, color='r')
-        plt.text(.5*(self._vertices[0].coordinates[0] + self._vertices[1].coordinates[0]),
-                 .5*(self._vertices[0].coordinates[1] + self._vertices[1].coordinates[1]), str(n), color='r')
+        plt.plot([self.vertices[0].coordinates[0], self.vertices[1].coordinates[0]],
+                 [self.vertices[0].coordinates[1], self.vertices[1].coordinates[1]], linewidth=.5, color='r')
+        plt.text(.5*(self.vertices[0].coordinates[0] + self.vertices[1].coordinates[0]),
+                 .5*(self.vertices[0].coordinates[1] + self.vertices[1].coordinates[1]), str(n), color='r')
 
 
 class Vertex:
