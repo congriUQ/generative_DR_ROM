@@ -1,6 +1,11 @@
 '''Poisson FEM base class'''
 from matplotlib import pyplot as plt
 import numpy as np
+import scipy.sparse as sps
+import petsc4py
+import sys
+petsc4py.init(sys.argv)
+from petsc4py import PETSc
 
 
 class Mesh:
@@ -11,6 +16,7 @@ class Mesh:
         self._nVertices = 0
         self._nEdges = 0
         self.nCells = 0
+        self.nEq = None
 
     def createVertex(self, coordinates, globalVertexNumber=None):
         # Creates a vertex and appends it to vertex list
@@ -54,6 +60,7 @@ class Mesh:
             else:
                 vtx.equationNumber = equationNumber
                 equationNumber += 1
+        self.nEq = equationNumber
 
     def plot(self):
         for vtx in self.vertices:
@@ -125,6 +132,7 @@ class RectangularMesh(Mesh):
         self.nEl = self.nElX * self.nElY
         self.shapeFunGradients = None
         self.locStiffGrad = None
+        self.gradGlobStiff = []
 
     def compShapeFunGradMat(self):
         # Computes shape function gradient matrices B, see Fish & Belytshko
@@ -185,18 +193,41 @@ class RectangularMesh(Mesh):
 
     def compLocStiffGrad(self):
         # Compute local stiffness matrix gradients w.r.t. diffusivities
-
         if self.shapeFunGradients is None:
             self.compShapeFunGradMat()
 
-        self.locStiffGrad = np.empty((4, 4, self.nEl))
+        self.locStiffGrad = self.nEl * [np.empty((4, 4))]
         for e in range(self.nEl):
-            self.locStiffGrad[:, :, e] = \
+            self.locStiffGrad[e] = \
                 np.transpose(self.shapeFunGradients[:, :, e]) @ self.shapeFunGradients[:, :, e]
 
     def compGlobStiffStencil(self):
         # Compute stiffness stencil matrices K_e, such that K can be assembled via K = sum_e (lambda_e*K_e)
-        pass
+        if self.locStiffGrad is None:
+            self.compLocStiffGrad()
+
+        eqInd, kIndex = self. compEquationIndices()
+
+        globStiffStencil = np.empty((self.nEq**2, self.nCells))
+        e = 0
+        for cll in self.cells:
+            gradLocK = np.zeros((4, 4, self.nEl))
+            gradLocK[:, :, e] = self.locStiffGrad[e]
+            gradLocK = gradLocK.flatten(order='F')
+            Ke = sps.csr_matrix((gradLocK[kIndex], (eqInd[0], eqInd[1])))
+            Ke_dense = sps.csr_matrix.todense(Ke)
+            Ke = sps.csr_matrix(Ke_dense)
+            self.gradGlobStiff.append(Ke)
+            globStiffStencil[:, e] = Ke_dense.flatten(order='F')
+            e += 1
+        globStiffStencil = sps.csr_matrix(globStiffStencil)
+        globStiffStencil = PETSc.Mat().createAIJ(
+            size=globStiffStencil.shape, csr=(globStiffStencil.indptr, globStiffStencil.indices, globStiffStencil.data))
+        globStiffStencil.assemblyBegin()
+        globStiffStencil.assemblyEnd()
+        # indptr, colind, val = globStiffStencil.getValuesCSR()
+        # print('PETSc to scipy = ', sps.csr_matrix((val, colind, indptr)))
+        return globStiffStencil
 
 
 class Cell:
