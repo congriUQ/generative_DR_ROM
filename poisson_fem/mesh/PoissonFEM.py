@@ -1,4 +1,4 @@
-'''FEM Mesh base class'''
+'''Poisson FEM base class'''
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -12,9 +12,9 @@ class Mesh:
         self._nEdges = 0
         self.nCells = 0
 
-    def createVertex(self, coordinates):
+    def createVertex(self, coordinates, globalVertexNumber=None):
         # Creates a vertex and appends it to vertex list
-        vtx = Vertex(coordinates)
+        vtx = Vertex(coordinates, globalVertexNumber)
         self.vertices.append(vtx)
         self._nVertices += 1
 
@@ -29,9 +29,9 @@ class Mesh:
 
         self._nEdges += 1
 
-    def createCell(self, vertices, edges):
+    def createCell(self, vertices, edges, number=None):
         # Creates a cell and appends it to cell list
-        cll = Cell(vertices, edges)
+        cll = Cell(vertices, edges, number)
         self.cells.append(cll)
 
         # Link cell to vertices
@@ -44,12 +44,21 @@ class Mesh:
 
         self.nCells += 1
 
+    def setEssentialBoundary(self, locationIndicatorFun):
+        # locationIndicatorFun is the indicator function to the essential boundary, valueFun gives
+        # the dof values at the essential boundary
+        equationNumber = 0
+        for vtx in self.vertices:
+            if locationIndicatorFun(vtx.coordinates):
+                vtx.boundaryType = True
+            else:
+                vtx.equationNumber = equationNumber
+                equationNumber += 1
+
     def plot(self):
-        n = 0
         for vtx in self.vertices:
             if vtx is not None:
-                vtx.plot(n)
-                n += 1
+                vtx.plot()
 
         n = 0
         for edg in self._edges:
@@ -58,11 +67,9 @@ class Mesh:
                 n += 1
 
         # plot cell number into cell
-        n = 0
         for cll in self.cells:
             if cll is not None:
-                plt.text(cll.centroid[0], cll.centroid[1], str(n))
-            n += 1
+                plt.text(cll.centroid[0], cll.centroid[1], str(cll.number))
 
         plt.xlabel('x')
         plt.ylabel('y')
@@ -81,9 +88,11 @@ class RectangularMesh(Mesh):
         # Create vertices
         xCoord = np.concatenate((np.array([.0]), np.cumsum(gridX)))
         yCoord = np.concatenate((np.array([.0]), np.cumsum(gridY)))
+        n = 0
         for y in yCoord:
             for x in xCoord:
-                self.createVertex(np.array([x, y]))
+                self.createVertex(np.array([x, y]), globalVertexNumber=n)
+                n += 1
 
         # Create edges
         nx = len(gridX) + 1
@@ -107,7 +116,7 @@ class RectangularMesh(Mesh):
                        self.vertices[x + (y + 1)*(nx + 1) + 1], self.vertices[x + (y + 1)*(nx + 1)]]
                 edg = [self._edges[n], self._edges[nx*(ny + 1) + n + y + 1], self._edges[n + nx],
                        self._edges[nx*(ny + 1) + n + y]]
-                self.createCell(vtx, edg)
+                self.createCell(vtx, edg, number=n)
                 n += 1
 
         # minor stuff
@@ -148,6 +157,32 @@ class RectangularMesh(Mesh):
             # additional factor of sqrt(A)/2 onto B
             self.shapeFunGradients[:, :, e] = (1/(2*np.sqrt(self.cells[e].surface)))*np.concatenate((B0, B1, B2, B3))
 
+    def compEquationIndices(self):
+        # Compute equation indices for direct assembly of stiffness matrix
+        equationIndices0 = np.array([], dtype=np.uint32)
+        equationIndices1 = np.array([], dtype=np.uint32)
+        locIndices0 = np.array([], dtype=np.uint32)
+        locIndices1 = np.array([], dtype=np.uint32)
+        cllIndex = np.array([], dtype=np.uint32)
+        for cll in self.cells:
+            equations = np.array([], dtype=np.uint32)
+            eqVertices = np.array([], dtype=np.uint32)
+            i = 0
+            for vtx in cll.vertices:
+                if vtx.equationNumber is not None:
+                    equations = np.append(equations, np.array([vtx.equationNumber], dtype=np.uint32))
+                    eqVertices = np.append(eqVertices, np.array([i], dtype=np.uint32))
+                i += 1
+            eq0, eq1 = np.meshgrid(equations, equations)
+            vtx0, vtx1 = np.meshgrid(eqVertices, eqVertices)
+            equationIndices0 = np.append(equationIndices0, eq0.flatten())
+            equationIndices1 = np.append(equationIndices1, eq1.flatten())
+            locIndices0 = np.append(locIndices0, vtx0.flatten())
+            locIndices1 = np.append(locIndices1, vtx1.flatten())
+            cllIndex = np.append(cllIndex, cll.number*np.ones_like(vtx0.flatten()))
+        kIndex = np.ravel_multi_index((locIndices1, locIndices0, cllIndex), (4, 4, self.nCells), order='F')
+        return [equationIndices0, equationIndices1], kIndex
+
     def compLocStiffGrad(self):
         # Compute local stiffness matrix gradients w.r.t. diffusivities
 
@@ -160,15 +195,16 @@ class RectangularMesh(Mesh):
                 np.transpose(self.shapeFunGradients[:, :, e]) @ self.shapeFunGradients[:, :, e]
 
     def compGlobStiffStencil(self):
-        # tbd
+        # Compute stiffness stencil matrices K_e, such that K can be assembled via K = sum_e (lambda_e*K_e)
         pass
 
 
 class Cell:
-    def __init__(self, vertices, edges):
+    def __init__(self, vertices, edges, number=None):
         # Vertices and edges must be sorted according to local vertex/edge number!
         self.vertices = vertices
         self._edges = edges
+        self.number = number
         self.centroid = []
         self.computeCentroid()
         self.surface = self._edges[0].length*self._edges[1].length
@@ -210,10 +246,13 @@ class Edge:
 
 
 class Vertex:
-    def __init__(self, coordinates=np.zeros((2, 1))):
+    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None):
         self.coordinates = coordinates
         self.cells = []
         self.edges = []
+        self.boundaryType = False    # False for natural, True for essential vertex
+        self.equationNumber = None   # Equation number of dof belonging to vertex
+        self.globalNumber = globalNumber
 
     def addCell(self, cell):
         self.cells.append(cell)
@@ -221,6 +260,6 @@ class Vertex:
     def addEdge(self, edge):
         self.edges.append(edge)
 
-    def plot(self, n):
+    def plot(self):
         p = plt.plot(self.coordinates[0], self.coordinates[1], 'bx', linewidth=2.0, markersize=8.0)
-        plt.text(self.coordinates[0], self.coordinates[1], str(n), color='b')
+        plt.text(self.coordinates[0], self.coordinates[1], str(self.globalNumber), color='b')
