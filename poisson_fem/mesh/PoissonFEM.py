@@ -129,38 +129,45 @@ class RectangularMesh(Mesh):
         # minor stuff
         self.nElX = len(gridX)
         self.nElY = len(gridY)
-        self.nEl = self.nElX * self.nElY
+        self.nEl = self.nElX*self.nElY
+        # self.shapeFunGradients = None
+        # self.locStiffGrad = None
+        # self.gradGlobStiff = []
+        # self.globStiffStencil = None
+        #
+        # # Stiffness sparsity pattern
+        # self.K_nnz = None
+        # self.Kvec_nonzero = None
+        # self.K_indptr = None
+        # self.K_indices = None
+
+
+class FunctionSpace:
+    # Only bilinear is implemented!
+    def __init__(self, mesh, typ='bilinear'):
         self.shapeFunGradients = None
-        self.locStiffGrad = None
-        self.gradGlobStiff = []
-        self.globStiffStencil = None
+        self.getShapeFunGradMat(mesh)
 
-        # Stiffness sparsity pattern
-        self.K_nnz = None
-        self.Kvec_nonzero = None
-        self.K_indptr = None
-        self.K_indices = None
-
-    def compShapeFunGradMat(self):
+    def getShapeFunGradMat(self, mesh):
         # Computes shape function gradient matrices B, see Fish & Belytshko
 
         # Gauss quadrature points
-        xi0 = -1.0/np.sqrt(3)
-        xi1 = 1.0/np.sqrt(3)
+        xi0 = -1.0 / np.sqrt(3)
+        xi1 = 1.0 / np.sqrt(3)
 
-        self.shapeFunGradients = np.empty((8, 4, self.nEl))
-        for e in range(self.nEl):
+        self.shapeFunGradients = np.empty((8, 4, mesh.nEl))
+        for e in range(mesh.nEl):
             # short hand notation
-            x0 = self.cells[e].vertices[0].coordinates[0]
-            x1 = self.cells[e].vertices[1].coordinates[0]
-            y0 = self.cells[e].vertices[0].coordinates[1]
-            y3 = self.cells[e].vertices[3].coordinates[1]
+            x0 = mesh.cells[e].vertices[0].coordinates[0]
+            x1 = mesh.cells[e].vertices[1].coordinates[0]
+            y0 = mesh.cells[e].vertices[0].coordinates[1]
+            y3 = mesh.cells[e].vertices[3].coordinates[1]
 
             # coordinate transformation
-            xI = .5*(x0 + x1) + .5*xi0*(x1 - x0)
-            xII = .5*(x0 + x1) + .5*xi1*(x1 - x0)
-            yI = .5*(y0 + y3) + .5*xi0*(y3 - y0)
-            yII = .5*(y0 + y3) + .5*xi1*(y3 - y0)
+            xI = .5 * (x0 + x1) + .5 * xi0 * (x1 - x0)
+            xII = .5 * (x0 + x1) + .5 * xi1 * (x1 - x0)
+            yI = .5 * (y0 + y3) + .5 * xi0 * (y3 - y0)
+            yII = .5 * (y0 + y3) + .5 * xi1 * (y3 - y0)
 
             # B matrices for bilinear shape functions
             B0 = np.array([[yI - y3, y3 - yI, yI - y0, y0 - yI], [xI - x1, x0 - xI, xI - x0, x1 - xI]])
@@ -170,7 +177,24 @@ class RectangularMesh(Mesh):
 
             # Note:in Gauss quadrature, the differential transforms as dx = (l_x/2) d xi. Hence we take the
             # additional factor of sqrt(A)/2 onto B
-            self.shapeFunGradients[:, :, e] = (1/(2*np.sqrt(self.cells[e].surface)))*np.concatenate((B0, B1, B2, B3))
+            self.shapeFunGradients[:, :, e] = (1 / (2 * np.sqrt(mesh.cells[e].surface))) * np.concatenate(
+                (B0, B1, B2, B3))
+
+
+class StiffnessMatrix:
+    def __init__(self, mesh, funSpace):
+        self.mesh = mesh
+        self.funSpace = funSpace
+
+        self.locStiffGrad = None
+        self.globStiffGrad = []
+        self.globStiffStencil = None
+
+        # Stiffness sparsity pattern
+        self.nnz = None             # number of nonzero components
+        self.vec_nonzero = None     # nonzero components of flattened stiffness matrix
+        self.indptr = None          # csr indices
+        self.indices = None
 
     def compEquationIndices(self):
         # Compute equation indices for direct assembly of stiffness matrix
@@ -179,7 +203,7 @@ class RectangularMesh(Mesh):
         locIndices0 = np.array([], dtype=np.uint32)
         locIndices1 = np.array([], dtype=np.uint32)
         cllIndex = np.array([], dtype=np.uint32)
-        for cll in self.cells:
+        for cll in self.mesh.cells:
             equations = np.array([], dtype=np.uint32)
             eqVertices = np.array([], dtype=np.uint32)
             i = 0
@@ -195,18 +219,18 @@ class RectangularMesh(Mesh):
             locIndices0 = np.append(locIndices0, vtx0.flatten())
             locIndices1 = np.append(locIndices1, vtx1.flatten())
             cllIndex = np.append(cllIndex, cll.number*np.ones_like(vtx0.flatten()))
-        kIndex = np.ravel_multi_index((locIndices1, locIndices0, cllIndex), (4, 4, self.nCells), order='F')
+        kIndex = np.ravel_multi_index((locIndices1, locIndices0, cllIndex), (4, 4, self.mesh.nCells), order='F')
         return [equationIndices0, equationIndices1], kIndex
 
     def compLocStiffGrad(self):
         # Compute local stiffness matrix gradients w.r.t. diffusivities
-        if self.shapeFunGradients is None:
-            self.compShapeFunGradMat()
+        if self.funSpace.shapeFunGradients is None:
+            self.funSpace.getShapeFunGradMat()
 
-        self.locStiffGrad = self.nEl * [np.empty((4, 4))]
-        for e in range(self.nEl):
+        self.locStiffGrad = self.mesh.nEl * [np.empty((4, 4))]
+        for e in range(self.mesh.nEl):
             self.locStiffGrad[e] = \
-                np.transpose(self.shapeFunGradients[:, :, e]) @ self.shapeFunGradients[:, :, e]
+                np.transpose(self.funSpace.shapeFunGradients[:, :, e]) @ self.funSpace.shapeFunGradients[:, :, e]
 
     def compGlobStiffStencil(self):
         # Compute stiffness stencil matrices K_e, such that K can be assembled via K = sum_e (lambda_e*K_e)
@@ -214,18 +238,18 @@ class RectangularMesh(Mesh):
         if self.locStiffGrad is None:
             self.compLocStiffGrad()
 
-        eqInd, kIndex = self. compEquationIndices()
+        eqInd, kIndex = self.compEquationIndices()
 
-        globStiffStencil = np.empty((self.nEq**2, self.nCells))
+        globStiffStencil = np.empty((self.mesh.nEq**2, self.mesh.nCells))
         e = 0
-        for cll in self.cells:
-            gradLocK = np.zeros((4, 4, self.nEl))
+        for cll in self.mesh.cells:
+            gradLocK = np.zeros((4, 4, self.mesh.nEl))
             gradLocK[:, :, e] = self.locStiffGrad[e]
             gradLocK = gradLocK.flatten(order='F')
             Ke = sps.csr_matrix((gradLocK[kIndex], (eqInd[0], eqInd[1])))
             Ke_dense = sps.csr_matrix.todense(Ke)
             Ke = sps.csr_matrix(Ke_dense)
-            self.gradGlobStiff.append(Ke)
+            self.globStiffGrad.append(Ke)
             globStiffStencil[:, e] = Ke_dense.flatten(order='F')
             e += 1
         globStiffStencil = sps.csr_matrix(globStiffStencil)
@@ -239,21 +263,17 @@ class RectangularMesh(Mesh):
 
     def compSparsityPattern(self):
         # Computes sparsity pattern of stiffness matrix/stiffness matrix vector for fast matrix assembly
-        testVec = PETSc.Vec().createSeq(self.nCells)
-        testVec.setValues(range(self.nCells), np.ones(self.nCells))
-        Kvec = PETSc.Vec().createSeq(self.nEq**2)
+        testVec = PETSc.Vec().createSeq(self.mesh.nCells)
+        testVec.setValues(range(self.mesh.nCells), np.ones(self.mesh.nCells))
+        Kvec = PETSc.Vec().createSeq(self.mesh.nEq**2)
 
         self.globStiffStencil.mult(testVec, Kvec)
-        Kvec_nonzero = np.nonzero(Kvec.array)
-        nnz = len(Kvec_nonzero[0])     # important for memory allocation
+        self.vec_nonzero = np.nonzero(Kvec.array)
+        self.nnz = len(self.vec_nonzero[0])     # important for memory allocation
 
-        Ktmp = sps.csr_matrix(np.reshape(Kvec.array, (self.nEq, self.nEq), order='F'))
-        indptr = Ktmp.indptr.copy()     # csr-like indices
-        indices = Ktmp.indices.copy()
-        self.K_nnz = nnz
-        self.Kvec_nonzero = Kvec_nonzero
-        self.K_indptr = indptr
-        self.K_indices = indices
+        Ktmp = sps.csr_matrix(np.reshape(Kvec.array, (self.mesh.nEq, self.mesh.nEq), order='F'))
+        self.indptr = Ktmp.indptr.copy()     # csr-like indices
+        self.indices = Ktmp.indices.copy()
 
 
 class Cell:
