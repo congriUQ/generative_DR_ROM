@@ -133,6 +133,13 @@ class RectangularMesh(Mesh):
         self.shapeFunGradients = None
         self.locStiffGrad = None
         self.gradGlobStiff = []
+        self.globStiffStencil = None
+
+        # Stiffness sparsity pattern
+        self.K_nnz = None
+        self.Kvec_nonzero = None
+        self.K_indptr = None
+        self.K_indices = None
 
     def compShapeFunGradMat(self):
         # Computes shape function gradient matrices B, see Fish & Belytshko
@@ -203,6 +210,7 @@ class RectangularMesh(Mesh):
 
     def compGlobStiffStencil(self):
         # Compute stiffness stencil matrices K_e, such that K can be assembled via K = sum_e (lambda_e*K_e)
+        # This can be done much more efficiently, but is precomputed and therefore not bottleneck.
         if self.locStiffGrad is None:
             self.compLocStiffGrad()
 
@@ -227,7 +235,25 @@ class RectangularMesh(Mesh):
         globStiffStencil.assemblyEnd()
         # indptr, colind, val = globStiffStencil.getValuesCSR()
         # print('PETSc to scipy = ', sps.csr_matrix((val, colind, indptr)))
-        return globStiffStencil
+        self.globStiffStencil = globStiffStencil
+
+    def compSparsityPattern(self):
+        # Computes sparsity pattern of stiffness matrix/stiffness matrix vector for fast matrix assembly
+        testVec = PETSc.Vec().createSeq(self.nCells)
+        testVec.setValues(range(self.nCells), np.ones(self.nCells))
+        Kvec = PETSc.Vec().createSeq(self.nEq**2)
+
+        self.globStiffStencil.mult(testVec, Kvec)
+        Kvec_nonzero = np.nonzero(Kvec.array)
+        nnz = len(Kvec_nonzero[0])     # important for memory allocation
+
+        Ktmp = sps.csr_matrix(np.reshape(Kvec.array, (self.nEq, self.nEq), order='F'))
+        indptr = Ktmp.indptr.copy()     # csr-like indices
+        indices = Ktmp.indices.copy()
+        self.K_nnz = nnz
+        self.Kvec_nonzero = Kvec_nonzero
+        self.K_indptr = indptr
+        self.K_indices = indices
 
 
 class Cell:

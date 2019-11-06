@@ -3,7 +3,8 @@
   <component name="ChangeListManager">
     <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="Mesh class completed">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Untitled.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/Untitled.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/PETSc_assembly_solution_speedup.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/PETSc_assembly_solution_speedup.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/poisson_fem/mesh/PoissonFEM.py" beforeDir="false" afterPath="$PROJECT_DIR$/poisson_fem/mesh/PoissonFEM.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -158,7 +159,7 @@
       <updated>1572540058641</updated>
       <workItem from="1572855855629" duration="53000" />
       <workItem from="1572855947684" duration="4624000" />
-      <workItem from="1572860884417" duration="50364000" />
+      <workItem from="1572860884417" duration="52761000" />
     </task>
     <task id="LOCAL-00001" summary="Mesh class completed">
       <created>1572860574535</created>
