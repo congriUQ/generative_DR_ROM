@@ -51,16 +51,26 @@ class Mesh:
         self.nCells += 1
 
     def setEssentialBoundary(self, locationIndicatorFun):
-        # locationIndicatorFun is the indicator function to the essential boundary, valueFun gives
-        # the dof values at the essential boundary
+        # locationIndicatorFun is the indicator function to the essential boundary
         equationNumber = 0
         for vtx in self.vertices:
             if locationIndicatorFun(vtx.coordinates):
                 vtx.boundaryType = True
+                for cll in vtx.cells:
+                    cll.containsEssentialVertex = True
             else:
                 vtx.equationNumber = equationNumber
                 equationNumber += 1
         self.nEq = equationNumber
+
+    def setNaturalBoundary(self, locationIndicatorFun):
+        # locationIndicatorFun is the indicator function to the natural boundary
+        # locationIndicatorFun should include pointwise essential boundaries, i.e., for essential boundary at
+        # x = 0, y = 0, locationIndicatorFun should indicate the whole domain boundary
+        for edg in self.edges:
+            if locationIndicatorFun(edg.vertices[0].coordinates) and locationIndicatorFun(edg.vertices[1].coordinates):
+                # Both edge vertices are on natural boundary, i.e., edge is natural boundary
+                edg.boundaryType = True
 
     def plot(self):
         for vtx in self.vertices:
@@ -142,6 +152,74 @@ class RectangularMesh(Mesh):
         # self.K_indices = None
 
 
+class Cell:
+    def __init__(self, vertices, edges, number=None):
+        # Vertices and edges must be sorted according to local vertex/edge number!
+        self.vertices = vertices
+        self._edges = edges
+        self.number = number
+        self.centroid = []
+        self.computeCentroid()
+        self.surface = self._edges[0].length*self._edges[1].length
+        self.containsEssentialVertex = False
+
+    def computeCentroid(self):
+        # Compute cell centroid
+        self.centroid = np.zeros(2)
+        for vtx in self.vertices:
+            self.centroid += vtx.coordinates
+        self.centroid /= len(self.vertices)
+
+    def deleteEdges(self, indices):
+        # Deletes edges according to indices by setting them to None
+        for i in indices:
+            self._edges[i] = None
+
+    def inside(self, x):
+        # Checks if point x is inside of cell
+        return (self.vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
+                <= self.vertices[2].coordinates[0] + np.finfo(float).eps and
+                self.vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
+                <= self.vertices[2].coordinates[1] + np.finfo(float).eps)
+
+
+class Edge:
+    def __init__(self, vtx0, vtx1):
+        self.vertices = [vtx0, vtx1]
+        self.cells = []
+        self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
+        self.boundaryType = False       # True if edge is on natural boundary
+
+    def addCell(self, cell):
+        self.cells.append(cell)
+
+    def plot(self, n):
+        plt.plot([self.vertices[0].coordinates[0], self.vertices[1].coordinates[0]],
+                 [self.vertices[0].coordinates[1], self.vertices[1].coordinates[1]], linewidth=.5, color='r')
+        plt.text(.5*(self.vertices[0].coordinates[0] + self.vertices[1].coordinates[0]),
+                 .5*(self.vertices[0].coordinates[1] + self.vertices[1].coordinates[1]), str(n), color='r')
+
+
+class Vertex:
+    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None):
+        self.coordinates = coordinates
+        self.cells = []
+        self.edges = []
+        self.boundaryType = False    # False for natural, True for essential vertex
+        self.equationNumber = None   # Equation number of dof belonging to vertex
+        self.globalNumber = globalNumber
+
+    def addCell(self, cell):
+        self.cells.append(cell)
+
+    def addEdge(self, edge):
+        self.edges.append(edge)
+
+    def plot(self):
+        p = plt.plot(self.coordinates[0], self.coordinates[1], 'bx', linewidth=2.0, markersize=8.0)
+        plt.text(self.coordinates[0], self.coordinates[1], str(self.globalNumber), color='b')
+
+
 class FunctionSpace:
     # Only bilinear is implemented!
     def __init__(self, mesh, typ='bilinear'):
@@ -185,6 +263,7 @@ class StiffnessMatrix:
     def __init__(self, mesh, funSpace):
         self.mesh = mesh
         self.funSpace = funSpace
+        self.rangeCells = range(mesh.nCells)  # For assembly. more efficient if only allocated once?
 
         self.locStiffGrad = None
         self.globStiffGrad = []
@@ -192,9 +271,18 @@ class StiffnessMatrix:
 
         # Stiffness sparsity pattern
         self.nnz = None             # number of nonzero components
-        self.vec_nonzero = None     # nonzero components of flattened stiffness matrix
+        self.vec_nonzero = None     # nonzero component indices of flattened stiffness matrix
         self.indptr = None          # csr indices
         self.indices = None
+
+        # Pre-computations
+        self.compGlobStiffStencil()
+        self.compSparsityPattern()
+
+        # Pre-allocations
+        self.matrix = PETSc.Mat().createAIJ(size=(mesh.nEq, mesh.nEq), nnz=self.nnz)
+        self.conductivity = PETSc.Vec().createSeq(mesh.nCells)     # permeability/diffusivity vector
+        self.assemblyVector = PETSc.Vec().createSeq(mesh.nEq**2)      # For quick assembly with matrix vector product
 
     def compEquationIndices(self):
         # Compute equation indices for direct assembly of stiffness matrix
@@ -275,68 +363,21 @@ class StiffnessMatrix:
         self.indptr = Ktmp.indptr.copy()     # csr-like indices
         self.indices = Ktmp.indices.copy()
 
-
-class Cell:
-    def __init__(self, vertices, edges, number=None):
-        # Vertices and edges must be sorted according to local vertex/edge number!
-        self.vertices = vertices
-        self._edges = edges
-        self.number = number
-        self.centroid = []
-        self.computeCentroid()
-        self.surface = self._edges[0].length*self._edges[1].length
-
-    def computeCentroid(self):
-        # Compute cell centroid
-        self.centroid = np.zeros(2)
-        for vtx in self.vertices:
-            self.centroid += vtx.coordinates
-        self.centroid /= len(self.vertices)
-
-    def deleteEdges(self, indices):
-        # Deletes edges according to indices by setting them to None
-        for i in indices:
-            self._edges[i] = None
-
-    def inside(self, x):
-        # Checks if point x is inside of cell
-        return (self.vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
-                <= self.vertices[2].coordinates[0] + np.finfo(float).eps and
-                self.vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
-                <= self.vertices[2].coordinates[1] + np.finfo(float).eps)
+    def assemble(self, x):
+        # x is numpy vector of permeability/conductivity
+        self.conductivity.setValues(self.rangeCells, x)
+        self.globStiffStencil.mult(self.conductivity, self.assemblyVector)
+        self.matrix.setValuesCSR(self.indptr, self.indices, self.assemblyVector.getValues(self.vec_nonzero))
+        self.matrix.assemblyBegin()
+        self.matrix.assemblyEnd()
 
 
-class Edge:
-    def __init__(self, vtx0, vtx1):
-        self.vertices = [vtx0, vtx1]
-        self.cells = []
-        self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
+class RightHandSide:
+    # This is the finite element force vector
+    def __init__(self, mesh):
+        self.F = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
 
-    def addCell(self, cell):
-        self.cells.append(cell)
+    def compFluxBC(self):
+        # Contribution due to flux boundary conditions
+        pass
 
-    def plot(self, n):
-        plt.plot([self.vertices[0].coordinates[0], self.vertices[1].coordinates[0]],
-                 [self.vertices[0].coordinates[1], self.vertices[1].coordinates[1]], linewidth=.5, color='r')
-        plt.text(.5*(self.vertices[0].coordinates[0] + self.vertices[1].coordinates[0]),
-                 .5*(self.vertices[0].coordinates[1] + self.vertices[1].coordinates[1]), str(n), color='r')
-
-
-class Vertex:
-    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None):
-        self.coordinates = coordinates
-        self.cells = []
-        self.edges = []
-        self.boundaryType = False    # False for natural, True for essential vertex
-        self.equationNumber = None   # Equation number of dof belonging to vertex
-        self.globalNumber = globalNumber
-
-    def addCell(self, cell):
-        self.cells.append(cell)
-
-    def addEdge(self, edge):
-        self.edges.append(edge)
-
-    def plot(self):
-        p = plt.plot(self.coordinates[0], self.coordinates[1], 'bx', linewidth=2.0, markersize=8.0)
-        plt.text(self.coordinates[0], self.coordinates[1], str(self.globalNumber), color='b')
