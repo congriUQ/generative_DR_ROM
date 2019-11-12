@@ -6,6 +6,7 @@ import petsc4py
 import sys
 petsc4py.init(sys.argv)
 from petsc4py import PETSc
+from scipy.integrate import quad
 
 
 class Mesh:
@@ -226,6 +227,14 @@ class FunctionSpace:
         self.shapeFunGradients = None
         self.getShapeFunGradMat(mesh)
 
+    @staticmethod
+    def elementShapeFunctions(self, xel, lowerLeft, upperRight, Ael):
+        # Returns the element shape function values
+        N = np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
+                      - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
+                      (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
+                      - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])])/Ael
+
     def getShapeFunGradMat(self, mesh):
         # Computes shape function gradient matrices B, see Fish & Belytshko
 
@@ -376,8 +385,118 @@ class RightHandSide:
     # This is the finite element force vector
     def __init__(self, mesh):
         self.F = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
+        self.fluxBC = None
 
-    def compFluxBC(self):
+    def compFluxBC(self, mesh, flux):
         # Contribution due to flux boundary conditions
-        pass
+
+        self.fluxBC = np.zeros((4, mesh.nCells))
+        for cll in mesh.cells:
+            for edg in cll.edges:
+                if edg.boundaryType:
+                    # Edge is a natural boundary
+                    # This is only valid for the unit square domain!
+                    # Find the edge outward normal vectors for generalization
+
+                    # Short hand notation
+                    ll = cll.vertices[0].coordinates    # lower left
+                    ur = cll.vertices[2].coordinates    # upper right
+                    if edg.vertices[0].coordinates[1] < np.finfo(float).eps and \
+                       edg.vertices[1].coordinates[1] < np.finfo(float).eps:
+                        # lower boundary
+                        for i in range(4):
+                            def fun(x):
+                                q = flux(np.array([x, 0.0]))
+                                q = - q[1]      # scalar product with boundary
+                                if i == 0:
+                                    N = (x - ur[0]) * (-ur[1])
+                                elif i == 1:
+                                    N = -(x - ll[0])*(- ur[1])
+                                elif i == 2:
+                                    N = (x - ll[0]) * (- ll[1])
+                                elif i == 3:
+                                    N = -(x - ur[0])*(- ll[1])
+                                N /= cll.surface
+                                return q*N
+
+                            Intgrl = quad(fun, ll[0], ur[0])
+                            self.fluxBC[i, cll.number] += Intgrl[0]
+
+                    elif edg.vertices[0].coordinates[0] > 1.0 - np.finfo(float).eps and \
+                         edg.vertices[1].coordinates[0] > 1.0 - np.finfo(float).eps:
+                        # right boundary
+                        for i in range(4):
+                            def fun(y):
+                                q = flux(np.array([1.0, y]))
+                                q = q[0]  # scalar product with boundary
+                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
+                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
+                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
+                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
+                                if i == 0:
+                                    N = (1.0 - ur[0]) * (y - ur[1])
+                                elif i == 1:
+                                    N = - (1.0 - ll[0]) * (y - ur[1])
+                                elif i == 2:
+                                    N = (1.0 - ll[0]) * (y - ll[1])
+                                elif i == 3:
+                                    N = - (1.0 - ur[0]) * (y - ll[1])
+                                N /= cll.surface
+                                return q * N
+
+                            Intgrl = quad(fun, ll[1], ur[1])
+                            self.fluxBC[i, cll.number] += Intgrl[0]
+
+                    elif edg.vertices[0].coordinates[1] > 1.0 - np.finfo(float).eps and \
+                         edg.vertices[1].coordinates[1] > 1.0 - np.finfo(float).eps:
+                        # upper boundary
+                        for i in range(4):
+                            def fun(x):
+                                q = flux(np.array([x, 1.0]))
+                                q = q[1]  # scalar product with boundary
+                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
+                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
+                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
+                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
+                                if i == 0:
+                                    N = (x - ur[0]) * (1.0 - ur[1])
+                                elif i == 1:
+                                    N = - (x - ll[0]) * (1.0 - ur[1])
+                                elif i == 2:
+                                    N = (x - ll[0]) * (1.0 - ll[1])
+                                elif i == 3:
+                                    N = - (x - ur[0]) * (1.0 - ll[1])
+                                N /= cll.surface
+                                return q * N
+
+                            Intgrl = quad(fun, ll[0], ur[0])
+                            self.fluxBC[i, cll.number] += Intgrl[0]
+
+                    elif edg.vertices[0].coordinates[0] < np.finfo(float).eps and \
+                         edg.vertices[1].coordinates[0] < np.finfo(float).eps:
+                        # left boundary
+                        for i in range(4):
+                            def fun(y):
+                                q = flux(np.array([0.0, y]))
+                                q = - q[0]  # scalar product with boundary
+                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
+                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
+                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
+                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
+                                if i == 0:
+                                    N = (- ur[0]) * (y - ur[1])
+                                elif i == 1:
+                                    N = ll[0] * (y - ur[1])
+                                elif i == 2:
+                                    N = ( - ll[0]) * (y - ll[1])
+                                elif i == 3:
+                                    N = ur[0] * (y - ll[1])
+                                N /= cll.surface
+                                return q * N
+
+                            Intgrl = quad(fun, ll[1], ur[1])
+                            self.fluxBC[i, cll.number] += Intgrl[0]
+
+
+
 
