@@ -11,7 +11,7 @@ from petsc4py import PETSc
 class Mesh:
     def __init__(self):
         self.vertices = []
-        self._edges = []
+        self.edges = []
         self.cells = []
         self._nVertices = 0
         self._nEdges = 0
@@ -27,7 +27,7 @@ class Mesh:
     def createEdge(self, vtx0, vtx1):
         # Creates an edge between vertices specified by vertex indices and adds it to edge list
         edg = Edge(vtx0, vtx1)
-        self._edges.append(edg)
+        self.edges.append(edg)
 
         # Link edges to vertices
         vtx0.addEdge(edg)
@@ -78,7 +78,7 @@ class Mesh:
                 vtx.plot()
 
         n = 0
-        for edg in self._edges:
+        for edg in self.edges:
             if edg is not None:
                 edg.plot(n)
                 n += 1
@@ -131,8 +131,8 @@ class RectangularMesh(Mesh):
             for x in range(nx):
                 vtx = [self.vertices[x + y*(nx + 1)], self.vertices[x + y*(nx + 1) + 1],
                        self.vertices[x + (y + 1)*(nx + 1) + 1], self.vertices[x + (y + 1)*(nx + 1)]]
-                edg = [self._edges[n], self._edges[nx*(ny + 1) + n + y + 1], self._edges[n + nx],
-                       self._edges[nx*(ny + 1) + n + y]]
+                edg = [self.edges[n], self.edges[nx*(ny + 1) + n + y + 1], self.edges[n + nx],
+                       self.edges[nx*(ny + 1) + n + y]]
                 self.createCell(vtx, edg, number=n)
                 n += 1
 
@@ -156,11 +156,11 @@ class Cell:
     def __init__(self, vertices, edges, number=None):
         # Vertices and edges must be sorted according to local vertex/edge number!
         self.vertices = vertices
-        self._edges = edges
+        self.edges = edges
         self.number = number
         self.centroid = []
         self.computeCentroid()
-        self.surface = self._edges[0].length*self._edges[1].length
+        self.surface = self.edges[0].length*self.edges[1].length
         self.containsEssentialVertex = False
 
     def computeCentroid(self):
@@ -173,7 +173,7 @@ class Cell:
     def deleteEdges(self, indices):
         # Deletes edges according to indices by setting them to None
         for i in indices:
-            self._edges[i] = None
+            self.edges[i] = None
 
     def inside(self, x):
         # Checks if point x is inside of cell
