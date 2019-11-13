@@ -284,7 +284,7 @@ class StiffnessMatrix:
 
         # Pre-allocations
         self.matrix = PETSc.Mat().createAIJ(size=(mesh.nEq, mesh.nEq), nnz=self.nnz)
-        self.conductivity = PETSc.Vec().createSeq(mesh.nCells)     # permeability/diffusivity vector
+        # self.conductivity = PETSc.Vec().createSeq(mesh.nCells)     # permeability/diffusivity vector
         self.assemblyVector = PETSc.Vec().createSeq(mesh.nEq**2)      # For quick assembly with matrix vector product
 
     def compEquationIndices(self):
@@ -368,8 +368,8 @@ class StiffnessMatrix:
 
     def assemble(self, x):
         # x is numpy vector of permeability/conductivity
-        self.conductivity.setValues(self.rangeCells, x)
-        self.globStiffStencil.mult(self.conductivity, self.assemblyVector)
+        # self.conductivity.setValues(self.rangeCells, x)
+        self.globStiffStencil.mult(x, self.assemblyVector)
         self.matrix.setValuesCSR(self.indptr, self.indices, self.assemblyVector.getValues(self.vec_nonzero))
         self.matrix.assemblyBegin()
         self.matrix.assemblyEnd()
@@ -378,14 +378,15 @@ class StiffnessMatrix:
 class RightHandSide:
     # This is the finite element force vector
     def __init__(self, mesh):
-        self.rhs = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
+        self.vector = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
         self.fluxBC = None
         self.sourceField = None
         self.naturalRHS = PETSc.Vec().createSeq(mesh.nEq)
         self.cellsWithEssentialBC = []    # precompute for performance
         self.findEssentialCells(mesh)
-        self.rhsStencil = np.zeros((mesh.nEq, mesh.nCells))
-        self.rhs_np = None
+        # Use nnz = 0, PETSc will allocate  additional storage by itself
+        self.rhsStencil = PETSc.Mat().createAIJ(size=(mesh.nEq, mesh.nCells), nnz=0)
+        self.rhsStencil.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
 
     def setFluxBC(self, mesh, flux):
         # Contribution due to flux boundary conditions
@@ -557,6 +558,7 @@ class RightHandSide:
                 self.cellsWithEssentialBC.append(cll.number)
 
     def setRhsStencil(self, mesh, stiffnessMatrix):
+        rhsStencil_np = np.zeros((mesh.nEq, mesh.nCells))
         for c in self.cellsWithEssentialBC:
             essBoundaryValues = np.zeros(4)
             i = 0
@@ -569,10 +571,18 @@ class RightHandSide:
             i = 0
             for vtx in mesh.cells[c].vertices:
                 if vtx.equationNumber is not None:
-                    self.rhsStencil[vtx.equationNumber, c] -= locEssBC[i]
+                    rhsStencil_np[vtx.equationNumber, c] -= locEssBC[i]
                 i += 1
+
+        # Assemble PETSc matrix from numpy
+        for c in self.cellsWithEssentialBC:
+            for vtx in mesh.cells[c].vertices:
+                if vtx.equationNumber is not None:
+                    self.rhsStencil.setValue(vtx.equationNumber, c, rhsStencil_np[vtx.equationNumber, c])
+        self.rhsStencil.assemblyBegin()
+        self.rhsStencil.assemblyEnd()
 
     def assemble(self, x):
         # x is a PETSc vector of conductivity/permeability
-        self.rhs_np = self.naturalRHS + self.rhsStencil @ x
+        self.rhsStencil.multAdd(x, self.naturalRHS, self.vector)
 
