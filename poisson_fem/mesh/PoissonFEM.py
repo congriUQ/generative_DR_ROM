@@ -51,12 +51,13 @@ class Mesh:
 
         self.nCells += 1
 
-    def setEssentialBoundary(self, locationIndicatorFun):
+    def setEssentialBoundary(self, locationIndicatorFun, valueFun):
         # locationIndicatorFun is the indicator function to the essential boundary
         equationNumber = 0
         for vtx in self.vertices:
             if locationIndicatorFun(vtx.coordinates):
-                vtx.boundaryType = True
+                vtx.isEssential = True
+                vtx.boundaryValue = valueFun(vtx.coordinates)
                 for cll in vtx.cells:
                     cll.containsEssentialVertex = True
             else:
@@ -71,7 +72,7 @@ class Mesh:
         for edg in self.edges:
             if locationIndicatorFun(edg.vertices[0].coordinates) and locationIndicatorFun(edg.vertices[1].coordinates):
                 # Both edge vertices are on natural boundary, i.e., edge is natural boundary
-                edg.boundaryType = True
+                edg.isNatural = True
 
     def plot(self):
         for vtx in self.vertices:
@@ -189,7 +190,7 @@ class Edge:
         self.vertices = [vtx0, vtx1]
         self.cells = []
         self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
-        self.boundaryType = False       # True if edge is on natural boundary
+        self.isNatural = False       # True if edge is on natural boundary
 
     def addCell(self, cell):
         self.cells.append(cell)
@@ -206,7 +207,8 @@ class Vertex:
         self.coordinates = coordinates
         self.cells = []
         self.edges = []
-        self.boundaryType = False    # False for natural, True for essential vertex
+        self.isEssential = False    # False for natural, True for essential vertex
+        self.boundaryValue = None    # Value for essential boundary
         self.equationNumber = None   # Equation number of dof belonging to vertex
         self.globalNumber = globalNumber
 
@@ -226,14 +228,6 @@ class FunctionSpace:
     def __init__(self, mesh, typ='bilinear'):
         self.shapeFunGradients = None
         self.getShapeFunGradMat(mesh)
-
-    @staticmethod
-    def elementShapeFunctions(self, xel, lowerLeft, upperRight, Ael):
-        # Returns the element shape function values
-        N = np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
-                      - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
-                      (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
-                      - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])])/Ael
 
     def getShapeFunGradMat(self, mesh):
         # Computes shape function gradient matrices B, see Fish & Belytshko
@@ -384,16 +378,22 @@ class StiffnessMatrix:
 class RightHandSide:
     # This is the finite element force vector
     def __init__(self, mesh):
-        self.F = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
+        self.rhs = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
         self.fluxBC = None
+        self.sourceField = None
+        self.naturalRHS = PETSc.Vec().createSeq(mesh.nEq)
+        self.cellsWithEssentialBC = []    # precompute for performance
+        self.findEssentialCells(mesh)
+        self.rhsStencil = np.zeros((mesh.nEq, mesh.nCells))
+        self.rhs_np = None
 
-    def compFluxBC(self, mesh, flux):
+    def setFluxBC(self, mesh, flux):
         # Contribution due to flux boundary conditions
 
         self.fluxBC = np.zeros((4, mesh.nCells))
         for cll in mesh.cells:
             for edg in cll.edges:
-                if edg.boundaryType:
+                if edg.isNatural:
                     # Edge is a natural boundary
                     # This is only valid for the unit square domain!
                     # Find the edge outward normal vectors for generalization
@@ -497,6 +497,82 @@ class RightHandSide:
                             Intgrl = quad(fun, ll[1], ur[1])
                             self.fluxBC[i, cll.number] += Intgrl[0]
 
+    def setSourceField(self, mesh, sourceField):
+        # Local force vector elements due to source field
 
+        # Gauss points
+        xi0 = -1.0/np.sqrt(3)
+        xi1 = 1.0/np.sqrt(3)
+        eta0 = -1.0/np.sqrt(3)
+        eta1 = 1.0/np.sqrt(3)
 
+        self.sourceField = np.zeros((4, mesh.nCells))
+
+        e = 0
+        for cll in mesh.cells:
+            # Short hand notation
+            x0 = cll.vertices[0].coordinates[0]
+            x1 = cll.vertices[2].coordinates[0]
+            y0 = cll.vertices[0].coordinates[1]
+            y1 = cll.vertices[2].coordinates[1]
+
+            # Coordinate transformation
+            xI = .5*(x0 + x1) + .5*xi0*(x1 - x0)
+            xII = .5*(x0 + x1) + .5*xi1*(x1 - x0)
+            yI = .5*(y0 + y1) + .5*eta0*(y1 - y0)
+            yII = .5*(y0 + y1) + .5*eta1*(y1 - y0)
+
+            source = sourceField(cll.centroid)
+            self.sourceField[0, e] = source*(1.0/cll.surface)*((xI - x1)*(yI - y1) + (xII - x1)*(yII - y1) +
+                                                               (xI - x1)*(yII - y1) + (xII - x1)*(yI - y1))
+            self.sourceField[1, e] = - source*(1.0/cll.surface)*((xI - x0)*(yI - y1) + (xII - x0) * (yII - y1) +
+                                                                 (xI - x0)*(yII - y1) + (xII - x0)*(yI - y1))
+            self.sourceField[2, e] = source*(1.0/cll.surface)*((xI - x0)*(yI - y0) + (xII - x0)*(yII - y0) +
+                                                               (xI - x0)*(yII - y0) + (xII - x0) * (yI - y0))
+            self.sourceField[3, e] = - source*(1.0/cll.surface)*((xI - x1)*(yI - y0) + (xII - x1)*(yII - y0) +
+                                                                 (xI - x1)*(yII - y0) + (xII - x1)*(yI - y0))
+            e += 1
+
+    def setNaturalRHS(self, mesh, flux):
+        # Sets the part of the RHS due to natural BC's and source field
+        if self.fluxBC is None:
+            self.setFluxBC(mesh, flux)
+
+        naturalRHS = np.zeros(mesh.nEq)
+        e = 0
+        for cll in mesh.cells:
+            v = 0
+            for vtx in cll.vertices:
+                if vtx.equationNumber is not None:
+                    naturalRHS[vtx.equationNumber] += self.fluxBC[v, e]
+                    if self.sourceField is not None:
+                        naturalRHS[vtx.equationNumber] += self.sourceField[v, e]
+                v += 1
+            e += 1
+        self.naturalRHS.setValues(range(mesh.nEq), naturalRHS)
+
+    def findEssentialCells(self, mesh):
+        for cll in mesh.cells:
+            if cll.containsEssentialVertex:
+                self.cellsWithEssentialBC.append(cll.number)
+
+    def setRhsStencil(self, mesh, stiffnessMatrix):
+        for c in self.cellsWithEssentialBC:
+            essBoundaryValues = np.zeros(4)
+            i = 0
+            for vtx in mesh.cells[c].vertices:
+                if vtx.isEssential:
+                    essBoundaryValues[i] = vtx.boundaryValue
+                i += 1
+
+            locEssBC = stiffnessMatrix.locStiffGrad[c] @ essBoundaryValues
+            i = 0
+            for vtx in mesh.cells[c].vertices:
+                if vtx.equationNumber is not None:
+                    self.rhsStencil[vtx.equationNumber, c] -= locEssBC[i]
+                i += 1
+
+    def assemble(self, x):
+        # x is a PETSc vector of conductivity/permeability
+        self.rhs_np = self.naturalRHS + self.rhsStencil @ x
 
