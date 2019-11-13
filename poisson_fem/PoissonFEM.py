@@ -19,9 +19,9 @@ class Mesh:
         self.nCells = 0
         self.nEq = None
 
-    def createVertex(self, coordinates, globalVertexNumber=None):
+    def createVertex(self, coordinates, globalVertexNumber=None, rowIndex=None, colIndex=None):
         # Creates a vertex and appends it to vertex list
-        vtx = Vertex(coordinates, globalVertexNumber)
+        vtx = Vertex(coordinates, globalVertexNumber, rowIndex, colIndex)
         self.vertices.append(vtx)
         self._nVertices += 1
 
@@ -108,10 +108,14 @@ class RectangularMesh(Mesh):
         xCoord = np.concatenate((np.array([.0]), np.cumsum(gridX)))
         yCoord = np.concatenate((np.array([.0]), np.cumsum(gridY)))
         n = 0
+        rowIndex = 0
         for y in yCoord:
+            colIndex = 0
             for x in xCoord:
-                self.createVertex(np.array([x, y]), globalVertexNumber=n)
+                self.createVertex(np.array([x, y]), globalVertexNumber=n, rowIndex=rowIndex, colIndex=colIndex)
                 n += 1
+                colIndex += 1
+            rowIndex += 1
 
         # Create edges
         nx = len(gridX) + 1
@@ -203,7 +207,7 @@ class Edge:
 
 
 class Vertex:
-    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None):
+    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None, rowIndex=None, colIndex=None):
         self.coordinates = coordinates
         self.cells = []
         self.edges = []
@@ -211,6 +215,8 @@ class Vertex:
         self.boundaryValue = None    # Value for essential boundary
         self.equationNumber = None   # Equation number of dof belonging to vertex
         self.globalNumber = globalNumber
+        self.rowIndex = rowIndex
+        self.colIndex = colIndex
 
     def addCell(self, cell):
         self.cells.append(cell)
