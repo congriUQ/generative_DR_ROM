@@ -2,10 +2,11 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="Mesh class completed">
+      <change afterPath="$PROJECT_DIR$/Data.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/GenerativeSurrogate.py" beforeDir="false" afterPath="$PROJECT_DIR$/GenerativeSurrogate.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ROM.py" beforeDir="false" afterPath="$PROJECT_DIR$/ROM.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/poisson_fem/PoissonFEM.py" beforeDir="false" afterPath="$PROJECT_DIR$/poisson_fem/PoissonFEM.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/PETSc_assembly_solution_speedup.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/PETSc_assembly_solution_speedup.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/generativeSurrogate.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/generativeSurrogate.ipynb" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -161,7 +162,7 @@
       <workItem from="1572855855629" duration="53000" />
       <workItem from="1572855947684" duration="4624000" />
       <workItem from="1572860884417" duration="59019000" />
-      <workItem from="1573554297330" duration="36816000" />
+      <workItem from="1573554297330" duration="53432000" />
     </task>
     <task id="LOCAL-00001" summary="Mesh class completed">
       <created>1572860574535</created>
