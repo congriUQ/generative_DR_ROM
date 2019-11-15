@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
+from torch import optim
 import numpy as np
 
 
@@ -19,12 +20,12 @@ class Pc(nn.Module):
 
 class Pf(nn.Module):
     # From latent z-space to fine scale input data lambda_f
-    def __init__(self, dim_z, resolution):
+    def __init__(self, dim_z, dim_x=2):
         super(Pf, self).__init__()
-        self.fc0 = nn.Linear(dim_z, resolution**2)
+        self.fc0 = nn.Linear(dim_x + dim_z, 1)
 
-    def forward(self, z):
-        return self.fc0(z)
+    def forward(self, zx):
+        return torch.sigmoid(self.fc0(zx))
 
 
 class GenerativeSurrogate:

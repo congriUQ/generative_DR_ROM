@@ -2,13 +2,15 @@ import socket
 import scipy.io as sio
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 '''File for Stokes and Darcy training/test data'''
 
 
 class Data:
     # Base class for Stokes/Darcy training/testing data
-    def __init__(self, samples):
+    def __init__(self, samples, dtype=torch.float):
+        self.dtype = dtype
         self.resolution = 256               # mesh resolution
         self.samples = samples              # list of sample numbers
         self.nSamples = len(samples)
@@ -50,8 +52,9 @@ class StokesData(Data):
         self.X = []
         self.microstructR = []
         self.microstructX = []
-        self.microstructBitmap = []
-        self.bitmapResolution = 256
+        self.microstructImg = []
+        self.imgX = []                                      # Microstructure pixel coordinates
+        self.imgResolution = 128
 
     def setPathName(self):
         assert len(self.path) == 0, 'Data path already set'
@@ -110,24 +113,27 @@ class StokesData(Data):
                 self.microstructR.append(microstructFile['diskRadii'].flatten())
                 self.microstructX.append(microstructFile['diskCenters'])
 
-    def input2bitmap(self):
+    def input2img(self):
         if len(self.microstructR) == 0:
             self.readData(['M'])
 
-        xx, yy = np.meshgrid(np.linspace(0, 1, self.bitmapResolution), np.linspace(0, 1, self.bitmapResolution))
+        xx, yy = torch.meshgrid([torch.linspace(0, 1, self.imgResolution, dtype=self.dtype),
+                                 torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
+        self.imgX = torch.cat([xx.flatten().unsqueeze(1), yy.flatten().unsqueeze(1)], 1)
         # loop over exclusions
         i = 0
         for n in self.samples:
             r2 = self.microstructR[i]**2.0
-            self.microstructBitmap.append(np.zeros((self.bitmapResolution, self.bitmapResolution), dtype=bool))
+            self.microstructImg.append(torch.zeros(self.imgResolution, self.imgResolution, dtype=torch.bool))
 
             for nEx in range(len(self.microstructR[i])):
-                self.microstructBitmap[-1] = np.logical_or(self.microstructBitmap[-1],
-                ((xx - self.microstructX[i][nEx, 0])**2.0 + (yy - self.microstructX[i][nEx, 1])**2.0 <= r2[nEx]))
+                tmp = ((xx - self.microstructX[i][nEx, 0])**2.0 + (yy - self.microstructX[i][nEx, 1])**2.0 <= r2[nEx])
+                self.microstructImg[-1] = self.microstructImg[-1] | tmp
+            self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
             i += 1
 
     def plotMicrostruct(self, sampleNumber):
-        if len(self.microstructBitmap) == 0:
-            self.input2bitmap()
-        plt.imshow(self.microstructBitmap[sampleNumber], cmap='binary')
+        if len(self.microstructImg) == 0:
+            self.input2img()
+        plt.imshow(self.microstructImg[sampleNumber], cmap='binary')
 
