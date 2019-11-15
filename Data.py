@@ -52,7 +52,7 @@ class StokesData(Data):
         self.X = []
         self.microstructR = []
         self.microstructX = []
-        self.microstructImg = []
+        self.microstructImg = None
         self.imgX = []                                      # Microstructure pixel coordinates
         self.imgResolution = 128
 
@@ -120,20 +120,24 @@ class StokesData(Data):
         xx, yy = torch.meshgrid([torch.linspace(0, 1, self.imgResolution, dtype=self.dtype),
                                  torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
         self.imgX = torch.cat([xx.flatten().unsqueeze(1), yy.flatten().unsqueeze(1)], 1)
+
+        self.microstructImg = torch.zeros(self.imgResolution**2, self.nSamples, dtype=torch.bool)
         # loop over exclusions
         i = 0
         for n in self.samples:
             r2 = self.microstructR[i]**2.0
-            self.microstructImg.append(torch.zeros(self.imgResolution, self.imgResolution, dtype=torch.bool))
 
             for nEx in range(len(self.microstructR[i])):
                 tmp = ((xx - self.microstructX[i][nEx, 0])**2.0 + (yy - self.microstructX[i][nEx, 1])**2.0 <= r2[nEx])
-                self.microstructImg[-1] = self.microstructImg[-1] | tmp
-            self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
+                tmp = tmp.flatten()
+                self.microstructImg[:, i] = self.microstructImg[:, i] | tmp
+            # self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
             i += 1
+        self.microstructImg = self.microstructImg.type(self.dtype)
 
     def plotMicrostruct(self, sampleNumber):
         if len(self.microstructImg) == 0:
             self.input2img()
-        plt.imshow(self.microstructImg[sampleNumber], cmap='binary')
+        plt.imshow(torch.reshape(self.microstructImg[:, sampleNumber],
+                                 (self.imgResolution, self.imgResolution)), cmap='binary')
 
