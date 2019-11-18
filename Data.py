@@ -121,7 +121,7 @@ class StokesData(Data):
                                  torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
         self.imgX = torch.cat([xx.flatten().unsqueeze(1), yy.flatten().unsqueeze(1)], 1)
 
-        self.microstructImg = torch.zeros(self.imgResolution**2, self.nSamples, dtype=torch.bool)
+        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution**2, dtype=torch.bool)
         # loop over exclusions
         i = 0
         for n in self.samples:
@@ -130,14 +130,16 @@ class StokesData(Data):
             for nEx in range(len(self.microstructR[i])):
                 tmp = ((xx - self.microstructX[i][nEx, 0])**2.0 + (yy - self.microstructX[i][nEx, 1])**2.0 <= r2[nEx])
                 tmp = tmp.flatten()
-                self.microstructImg[:, i] = self.microstructImg[:, i] | tmp
+                self.microstructImg[i] = self.microstructImg[i] | tmp
             # self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
             i += 1
         self.microstructImg = self.microstructImg.type(self.dtype)
+        # CrossEntropyLoss wants dtype long == int64
+        # self.microstructImg = self.microstructImg.type(torch.long)
 
     def plotMicrostruct(self, sampleNumber):
         if len(self.microstructImg) == 0:
             self.input2img()
-        plt.imshow(torch.reshape(self.microstructImg[:, sampleNumber],
+        plt.imshow(torch.reshape(self.microstructImg[sampleNumber],
                                  (self.imgResolution, self.imgResolution)), cmap='binary')
 
