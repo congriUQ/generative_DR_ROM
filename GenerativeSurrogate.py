@@ -50,7 +50,8 @@ class GenerativeSurrogate:
         self.data = data
         self.dim_z = dim_z
         self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
-        self.batchSizeZ = 10
+        self.batchSizeN = min(self.data.nSamples, 16)
+        self.batchSizeZ = 32
         self.pfNet = PfNet(dim_z)
         self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-3)
         self.pcNet = Pc(dim_z, rom.mesh.nCells)
@@ -63,16 +64,19 @@ class GenerativeSurrogate:
         # method to predict from the model for a certain input x
         pass
 
-    def loss_pf(self, predOut):
-        return -torch.dot(self.data.microstructImg.flatten(), torch.mean(torch.log(predOut), dim=2).flatten()) - \
-                torch.dot(1 - self.data.microstructImg.flatten(), torch.mean(torch.log(1 - predOut), dim=2).flatten())
+    def loss_pf(self, predOut, batchSamples):
+        return -torch.dot(self.data.microstructImg[batchSamples, :].flatten(),
+                          torch.mean(torch.log(predOut), dim=2).flatten()) - \
+                torch.dot(1 - self.data.microstructImg[batchSamples, :].flatten(),
+                          torch.mean(torch.log(1 - predOut), dim=2).flatten())
 
-    def pfStep(self):
-        # One training iteration
+    def pfStep(self, batchSamples):
+        # One training step
+        # batchSamples are indices of the samples contained in the batch
         # This needs to be replaced by the (approximate) posterior on z!!
-        z = torch.randn(self.data.nSamples, self.data.imgResolution**2, self.batchSizeZ, self.dim_z)
+        z = torch.randn(self.batchSizeN, self.data.imgResolution**2, self.batchSizeZ, self.dim_z)
         pred = self.pfNet(z, self.data.imgX)
-        loss = self.loss_pf(pred)
+        loss = self.loss_pf(pred, batchSamples)
         print('loss = ', loss)
         loss.backward()
         self.pfOpt.step()

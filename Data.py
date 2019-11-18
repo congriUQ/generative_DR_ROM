@@ -52,9 +52,11 @@ class StokesData(Data):
         self.X = []
         self.microstructR = []
         self.microstructX = []
-        self.microstructImg = None
+
         self.imgX = []                                      # Microstructure pixel coordinates
         self.imgResolution = 128
+        # Initialization -- dtype will change to self.dtype
+        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution ** 2, dtype=torch.bool)
 
     def setPathName(self):
         assert len(self.path) == 0, 'Data path already set'
@@ -98,6 +100,7 @@ class StokesData(Data):
                          str(self.boundaryConditions[3]) + 'x[1]_u_y=' + str(self.boundaryConditions[2]) + \
                          str(self.boundaryConditions[3]) + 'x[0]'
 
+        i = 0
         for n in self.samples:
             solutionFileName = folderName + '/solution' + str(n) + '.mat'
             file = sio.loadmat(solutionFileName)
@@ -112,16 +115,35 @@ class StokesData(Data):
                 microstructFile = sio.loadmat(microstructureFileName)
                 self.microstructR.append(microstructFile['diskRadii'].flatten())
                 self.microstructX.append(microstructFile['diskCenters'])
+            if 'IMG' in quantities:
+                try:
+                    self.microstructImg[i] = torch.load(self.path + 'microstructImg' +
+                                                        str(n) + '_res=' + str(self.imgResolution) + '.pt')
+                except:
+                    # If not transformed to image yet --
+                    # should only happen for the first sample
+                    self.input2img(save=True)
+                    self.microstructImg[i] = torch.load(self.path + 'microstructImg' +
+                                                          str(n) + '_res=' + str(self.imgResolution) + '.pt')
+            i += 1
+        if 'IMG' in quantities:
+            # Change data type from bool to dtype
+            self.microstructImg = self.microstructImg.type(self.dtype)
+            # compute pixel coordinates
+            self.getImgX()
 
-    def input2img(self):
+    def getImgX(self):
+        xx, yy = torch.meshgrid([torch.linspace(0, 1, self.imgResolution, dtype=self.dtype),
+                                 torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
+        self.imgX = torch.cat([xx.flatten().unsqueeze(1), yy.flatten().unsqueeze(1)], 1)
+
+    def input2img(self, save=False):
         if len(self.microstructR) == 0:
             self.readData(['M'])
 
         xx, yy = torch.meshgrid([torch.linspace(0, 1, self.imgResolution, dtype=self.dtype),
                                  torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
-        self.imgX = torch.cat([xx.flatten().unsqueeze(1), yy.flatten().unsqueeze(1)], 1)
 
-        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution**2, dtype=torch.bool)
         # loop over exclusions
         i = 0
         for n in self.samples:
@@ -132,6 +154,10 @@ class StokesData(Data):
                 tmp = tmp.flatten()
                 self.microstructImg[i] = self.microstructImg[i] | tmp
             # self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
+            if save:
+                # save to pytorch tensor
+                torch.save(self.microstructImg[i], self.path + 'microstructImg' + str(n) +
+                           '_res=' + str(self.imgResolution) + '.pt')
             i += 1
         self.microstructImg = self.microstructImg.type(self.dtype)
         # CrossEntropyLoss wants dtype long == int64
