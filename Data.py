@@ -54,7 +54,7 @@ class StokesData(Data):
         self.microstructX = []
 
         self.imgX = []                                      # Microstructure pixel coordinates
-        self.imgResolution = 128
+        self.imgResolution = 256
         # Initialization -- dtype will change to self.dtype
         self.microstructImg = torch.zeros(self.nSamples, self.imgResolution ** 2, dtype=torch.bool)
 
@@ -117,14 +117,16 @@ class StokesData(Data):
                 self.microstructX.append(microstructFile['diskCenters'])
             if 'IMG' in quantities:
                 try:
-                    self.microstructImg[i] = torch.load(self.path + 'microstructImg' +
-                                                        str(n) + '_res=' + str(self.imgResolution) + '.pt')
+                    self.microstructImg[i] = torch.tensor(np.load((self.path + 'microstructImg' +
+                                                        str(n) + '_res=' + str(self.imgResolution)) + '.npy'),
+                                                          dtype=torch.bool)
                 except:
                     # If not transformed to image yet --
                     # should only happen for the first sample
                     self.input2img(save=True)
-                    self.microstructImg[i] = torch.load(self.path + 'microstructImg' +
-                                                          str(n) + '_res=' + str(self.imgResolution) + '.pt')
+                    self.microstructImg[i] = torch.tensor(np.load(self.path + 'microstructImg' +
+                                                          str(n) + '_res=' + str(self.imgResolution) + '.npy'),
+                                                          dtype=torch.bool)
             i += 1
         if 'IMG' in quantities:
             # Change data type from bool to dtype
@@ -156,8 +158,8 @@ class StokesData(Data):
             # self.microstructImg[-1] = self.microstructImg[-1].type(self.dtype)
             if save:
                 # save to pytorch tensor
-                torch.save(self.microstructImg[i], self.path + 'microstructImg' + str(n) +
-                           '_res=' + str(self.imgResolution) + '.pt')
+                np.save(self.path + 'microstructImg' + str(n) +
+                           '_res=' + str(self.imgResolution), self.microstructImg[i].detach().numpy())
             i += 1
         self.microstructImg = self.microstructImg.type(self.dtype)
         # CrossEntropyLoss wants dtype long == int64

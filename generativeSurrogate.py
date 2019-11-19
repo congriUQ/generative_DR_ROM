@@ -4,6 +4,8 @@
 # In[1]:
 
 
+# %matplotlib qt
+
 from poisson_fem import PoissonFEM
 import ROM
 import GenerativeSurrogate as gs
@@ -87,9 +89,8 @@ rom = ROM.ROM(mesh, K, rhs, ksp)
 # In[7]:
 
 
-trainingData = dta.StokesData(range(16))
-trainingData.readData(['M'])
-trainingData.input2img()
+trainingData = dta.StokesData(range(64))
+trainingData.readData(['IMG'])
 # trainingData.plotMicrostruct(1)
 
 
@@ -102,218 +103,18 @@ model = gs.GenerativeSurrogate(rom, trainingData, dim_z)
 # In[9]:
 
 
-for n in range(10):
-    model.pfStep()
+steps = int(1e2)
+batchSamples = torch.tensor(range(model.batchSizeN))
+for s in range(steps):
+    print('step = ', s)
+    model.pfStep(batchSamples)
+    batchSamples = (batchSamples + model.batchSizeN) % trainingData.nSamples
 
 
 # In[10]:
 
 
-trainingData.microstructImg.shape
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
+model.plotInputReconstruction()
 
 
 # In[ ]:

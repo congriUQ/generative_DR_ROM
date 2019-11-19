@@ -4,7 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
 from torch import optim
-import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colorbar as cb
 import time
 
 
@@ -23,16 +24,19 @@ class PfNet(nn.Module):
     # From latent z-space to fine scale input data lambda_f
     def __init__(self, dim_z, dim_x=2):
         super(PfNet, self).__init__()
-        out_x = 1
-        out_z = 1
+        # out_x == out_z if there're no intermediate layers
+        out_x = 4
+        out_z = 4
         self.fcx = nn.Linear(dim_x, out_x)
         self.fcz = nn.Linear(dim_z, out_z)
         self.fcs = nn.Linear(out_x + out_z, 1)
 
     def forward(self, z, x):
         out_x = self.fcx(x)
+        out_x = torch.sigmoid(out_x)
         # Expand coordinate layer output to batchSizeN
         out_z = self.fcz(z)
+        out_z = torch.sigmoid(out_z)
         zs = out_z.shape
         out_x = out_x.unsqueeze(1)
         out_x = out_x.unsqueeze(0)
@@ -50,11 +54,15 @@ class GenerativeSurrogate:
         self.data = data
         self.dim_z = dim_z
         self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
-        self.batchSizeN = min(self.data.nSamples, 16)
-        self.batchSizeZ = 32
+        self.batchSizeN = min(self.data.nSamples, 32)
+        self.batchSizeZ = 10
         self.pfNet = PfNet(dim_z)
         self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-3)
         self.pcNet = Pc(dim_z, rom.mesh.nCells)
+        if __debug__:
+            # deletes old log file
+            self.log_pf_loss = open('./log_pf_loss.txt', 'w+')
+            self.log_pf_loss.close()
 
     def fit(self):
         # method to train the model
@@ -74,13 +82,64 @@ class GenerativeSurrogate:
         # One training step
         # batchSamples are indices of the samples contained in the batch
         # This needs to be replaced by the (approximate) posterior on z!!
-        z = torch.randn(self.batchSizeN, self.data.imgResolution**2, self.batchSizeZ, self.dim_z)
+        z = torch.randn(self.batchSizeN, 1, self.batchSizeZ, self.dim_z)
+        # Same sample for z is valid in every pixel of the image
+        z = z.expand(self.batchSizeN, self.data.imgResolution**2, self.batchSizeZ, self.dim_z)
         pred = self.pfNet(z, self.data.imgX)
         loss = self.loss_pf(pred, batchSamples)
-        print('loss = ', loss)
+        if __debug__:
+            print('loss = ', loss)
+            self.log_pf_loss = open('./log_pf_loss.txt', 'a+')
+            self.log_pf_loss.write(str(loss.detach().numpy()) + '\n')
+            self.log_pf_loss.close()
+
         loss.backward()
         self.pfOpt.step()
         self.pfOpt.zero_grad()
+
+    def plotInputReconstruction(self):
+        fig, ax = plt.subplots(1, 5)
+        figManager = plt.get_current_fig_manager()
+        figManager.window.showMaximized()
+        # This needs to be replaced by the (approximate) posterior on z!!
+        nSamplesZ = 100
+        z = torch.randn(1, self.data.imgResolution**2, nSamplesZ, self.dim_z)
+        samples = self.pfNet(z, self.data.imgX)
+        pred_mean = torch.mean(samples, dim=2)
+        mpbl = ax[0].imshow(torch.reshape(pred_mean,
+                                   (self.data.imgResolution, self.data.imgResolution)).detach().numpy())
+        ax[0].set_xticks([], [])
+        ax[0].set_yticks([], [])
+        pos = ax[0].get_position()
+        cb_ax = cb.make_axes(ax[0], location='left', shrink=.35, anchor=(-5.0, .5), ticklocation='left')
+        cbr = plt.colorbar(mpbl, cax=cb_ax[0])
+        # fig.colorbar(mpbl, ax=ax[0], location='left', pad=0.0)
+        ax[0].set_title('p(lambda)')
+        ax[0].set_position(pos)
+        ax[1].imshow(torch.reshape(pred_mean,
+                                   (self.data.imgResolution, self.data.imgResolution)).detach().numpy() > .5,
+                     cmap='binary')
+        ax[1].set_xticks([], [])
+        ax[1].set_yticks([], [])
+        ax[1].set_title('p(lambda) > .5')
+        ax[2].imshow((torch.reshape(samples[:, :, 0], (self.data.imgResolution, self.data.imgResolution)) >
+                      torch.rand(self.data.imgResolution, self.data.imgResolution)).detach().numpy(),
+                     cmap='binary')
+        ax[2].set_xticks([], [])
+        ax[2].set_yticks([], [])
+        ax[2].set_title('sample')
+        ax[3].imshow((torch.reshape(samples[:, :, 1], (self.data.imgResolution, self.data.imgResolution)) >
+                      torch.rand(self.data.imgResolution, self.data.imgResolution)).detach().numpy(),
+                     cmap='binary')
+        ax[3].set_xticks([], [])
+        ax[3].set_yticks([], [])
+        ax[3].set_title('sample')
+        ax[4].imshow((torch.reshape(samples[:, :, 2], (self.data.imgResolution, self.data.imgResolution)) >
+                      torch.rand(self.data.imgResolution, self.data.imgResolution)).detach().numpy(),
+                     cmap='binary')
+        ax[4].set_xticks([], [])
+        ax[4].set_yticks([], [])
+        ax[4].set_title('sample')
 
 
 
