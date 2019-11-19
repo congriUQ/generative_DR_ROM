@@ -10,6 +10,8 @@ while true
     p = plot(l, 'linewidth', 2.5, 'Parent', ax);
     axis(ax, 'tight');
     axis(ax, 'fill');
+    ax.XLabel.String = 'iteration';
+    ax.YLabel.String = 'loss (cross-entropy)';
     drawnow;
     pause(2)
 end

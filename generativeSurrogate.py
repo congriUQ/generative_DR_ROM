@@ -6,6 +6,7 @@
 
 # %matplotlib qt
 
+import matplotlib.pyplot as plt
 from poisson_fem import PoissonFEM
 import ROM
 import GenerativeSurrogate as gs
@@ -28,7 +29,7 @@ from torch import optim
 # Some fixed parameters
 lin_dim_rom = 4                      # Linear number of rom elements
 a = np.array([1, 2, 3])              # Boundary condition function coefficients
-dim_z = 3                            # Latent space dimension
+dim_z = 100                            # Latent space dimension
 dtype = torch.float                  # Tensor data type
 
 
@@ -89,7 +90,7 @@ rom = ROM.ROM(mesh, K, rhs, ksp)
 # In[7]:
 
 
-trainingData = dta.StokesData(range(64))
+trainingData = dta.StokesData(range(512))
 trainingData.readData(['IMG'])
 # trainingData.plotMicrostruct(1)
 
@@ -103,12 +104,11 @@ model = gs.GenerativeSurrogate(rom, trainingData, dim_z)
 # In[9]:
 
 
-steps = int(1e2)
-batchSamples = torch.tensor(range(model.batchSizeN))
+steps = int(150)
 for s in range(steps):
     print('step = ', s)
+    batchSamples = torch.LongTensor(model.batchSizeN).random_(0, trainingData.nSamples)
     model.pfStep(batchSamples)
-    batchSamples = (batchSamples + model.batchSizeN) % trainingData.nSamples
 
 
 # In[10]:
@@ -117,28 +117,54 @@ for s in range(steps):
 model.plotInputReconstruction()
 
 
-# In[ ]:
+# In[11]:
 
 
+f = plt.gcf()
+f.suptitle('Untrained, N = 2048', fontsize=32, y=.7)
 
 
-
-# In[ ]:
-
+# In[12]:
 
 
+trainingData.imgResolution**2*32*np.log(2)
 
 
-# In[ ]:
+# In[13]:
 
 
+trainingData
 
 
-
-# In[ ]:
-
+# In[14]:
 
 
+trainingData.microstructImg.nelement()
+
+
+# In[15]:
+
+
+X = torch.zeros(int(1e4), int(1e5))
+
+
+# In[16]:
+
+
+X.shape
+
+
+# In[17]:
+
+
+X.unsqueeze(2)
+X = X.expand(int(1e4), int(1e5))
+
+
+# In[18]:
+
+
+X.shape
 
 
 # In[ ]:

@@ -56,7 +56,7 @@ class StokesData(Data):
         self.imgX = []                                      # Microstructure pixel coordinates
         self.imgResolution = 256
         # Initialization -- dtype will change to self.dtype
-        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution ** 2, dtype=torch.bool)
+        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution**2, dtype=torch.bool)
 
     def setPathName(self):
         assert len(self.path) == 0, 'Data path already set'
@@ -101,9 +101,12 @@ class StokesData(Data):
                          str(self.boundaryConditions[3]) + 'x[0]'
 
         i = 0
+        mat_quantities = ['P', 'V', 'X', 'M']
         for n in self.samples:
             solutionFileName = folderName + '/solution' + str(n) + '.mat'
-            file = sio.loadmat(solutionFileName)
+            if any(qnt in quantities for qnt in mat_quantities):
+                # to avoid loading overhead
+                file = sio.loadmat(solutionFileName)
             if 'P' in quantities:
                 self.P.append(file['p'])
             if 'V' in quantities:
