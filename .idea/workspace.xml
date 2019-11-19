@@ -3,10 +3,7 @@
   <component name="ChangeListManager">
     <list default="true" id="6173b2fb-e404-4609-84c6-300ed80e3e05" name="Default" comment="Mesh class completed">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Data.py" beforeDir="false" afterPath="$PROJECT_DIR$/Data.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/GenerativeSurrogate.py" beforeDir="false" afterPath="$PROJECT_DIR$/GenerativeSurrogate.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/generativeSurrogate.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/generativeSurrogate.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/generativeSurrogate.py" beforeDir="false" afterPath="$PROJECT_DIR$/generativeSurrogate.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/log_pf_loss.txt" beforeDir="false" afterPath="$PROJECT_DIR$/log_pf_loss.txt" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
@@ -189,7 +186,7 @@
       <workItem from="1572860884417" duration="59019000" />
       <workItem from="1573554297330" duration="63178000" />
       <workItem from="1573754889022" duration="508000" />
-      <workItem from="1573810386680" duration="67538000" />
+      <workItem from="1573810386680" duration="68750000" />
     </task>
     <task id="LOCAL-00001" summary="Mesh class completed">
       <created>1572860574535</created>
