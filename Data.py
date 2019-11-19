@@ -24,13 +24,13 @@ class StokesData(Data):
         super().__init__(samples)
         # Number of exclusions
         self.nExclDist = 'logn'                         # Number of exclusions distribution
-        self.nExclDistParams = [7.8, .2]
+        self.nExclDistParams = [6.8, .2]
         self.exclMargins = [.003, .003, .003, .003]     # closest distance of exclusion to boundary
 
         # Radii distribution
         self.rDist = 'lognGP'
-        self.rDistParams = [-5.23, .3]
-        self.rGPsigma = .4
+        self.rDistParams = [-4.1, .7]
+        self.rGPsigma = .01
         self.rGPlength = .05
 
         # Center coordinate distribution
@@ -101,11 +101,11 @@ class StokesData(Data):
                          str(self.boundaryConditions[3]) + 'x[0]'
 
         i = 0
-        mat_quantities = ['P', 'V', 'X', 'M']
+        sol_quantities = ['P', 'V', 'X']
         for n in self.samples:
-            solutionFileName = folderName + '/solution' + str(n) + '.mat'
-            if any(qnt in quantities for qnt in mat_quantities):
+            if any(qnt in quantities for qnt in sol_quantities):
                 # to avoid loading overhead
+                solutionFileName = folderName + '/solution' + str(n) + '.mat'
                 file = sio.loadmat(solutionFileName)
             if 'P' in quantities:
                 self.P.append(file['p'])
@@ -114,8 +114,12 @@ class StokesData(Data):
             if 'X' in quantities:
                 self.X.append(file['x'])
             if 'M' in quantities:
-                microstructureFileName = self.path + 'microstructureInformation' + str(n) + '.mat'
-                microstructFile = sio.loadmat(microstructureFileName)
+                try:
+                    microstructureFileName = self.path + 'microstructureInformation' + str(n) + '.mat'
+                    microstructFile = sio.loadmat(microstructureFileName)
+                except:
+                    microstructureFileName = self.path + 'microstructureInformation_nomesh' + str(n) + '.mat'
+                    microstructFile = sio.loadmat(microstructureFileName)
                 self.microstructR.append(microstructFile['diskRadii'].flatten())
                 self.microstructX.append(microstructFile['diskCenters'])
             if 'IMG' in quantities:

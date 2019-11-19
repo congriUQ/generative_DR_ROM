@@ -25,30 +25,39 @@ class PfNet(nn.Module):
     def __init__(self, dim_z, dim_x=2):
         super(PfNet, self).__init__()
         # dim_out_x == dim_out_z if there're no intermediate layers
-        dim_out_x = 10
+        dim_out_x1 = 4
         dim_out_z = 4
-        self.fcx = nn.Linear(dim_x, dim_out_x)
-        self.fcz = nn.Linear(dim_z, dim_out_z)
-        self.fcs = nn.Linear(dim_out_x + dim_out_z, 1)
+        dim_out_s = 2
+        self.fcx0 = nn.Linear(dim_x, dim_out_x1)
+        self.acx0 = nn.ReLU()
+        self.fcz0 = nn.Linear(dim_z, dim_out_z)
+        self.acz0 = nn.ReLU()
+        self.fcs0 = nn.Linear(dim_out_x1 + dim_out_z, dim_out_s)
+        self.acs0 = nn.ReLU()
+        self.fcs1 = nn.Linear(dim_out_s, 1)
+        self.acs1 = nn.Sigmoid()
 
     def forward(self, z, x):
         # z.shape == (batchSizeN, imgResolution**2, batchSizeZ, dim_z)
         # x.shape == (imgResolution**2, 2)
-        out_x = self.fcx(x)         # out_x.shape = (imgResolution**2, dim_out_x)
-        out_x = torch.sigmoid(out_x)
-        # Expand coordinate layer output to batchSizeN
-        out_z = self.fcz(z)         # out_z.shape = (batchSizeN, imgResolution**2, batchSizeZ, dim_out_z)
-        out_z = torch.sigmoid(out_z)
+        out_x = self.fcx0(x)         # out_x.shape = (imgResolution**2, dim_out_x)
+        out_x = self.acx0(out_x)
+        out_z = self.fcz0(z)         # out_z.shape = (batchSizeN, imgResolution**2, batchSizeZ, dim_out_z)
+        out_z = self.acz0(out_z)
         zs = out_z.shape
         xs = out_x.shape
+        # Expand coordinate layer output to batchSizeN, batchSizeZ
         out_x = out_x.unsqueeze(1)
         out_x = out_x.unsqueeze(0)
         out_x = out_x.expand(zs[0], xs[0], zs[1], xs[1])
+        # Expand z layer output to pixels
         out_z = out_z.unsqueeze(1)
         out_z = out_z.expand(zs[0], xs[0], zs[1], zs[2])
         out = torch.cat((out_x, out_z), dim=3)  # out.shape = (batchSizeN, imgResolution**2, batchSizeZ, out_x + out_z)
-        out = self.fcs(out)     # out.shape = (batchSizeN, imgResolution**2, batchSizeZ, 1)
-        out = torch.sigmoid(out)
+        out = self.fcs0(out)     # out.shape = (batchSizeN, imgResolution**2, batchSizeZ, 1)
+        out = self.acs0(out)
+        out = self.fcs1(out)
+        out = self.acs1(out)
         return out
 
 
@@ -59,10 +68,10 @@ class GenerativeSurrogate:
         self.data = data
         self.dim_z = dim_z
         self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
-        self.batchSizeN = min(self.data.nSamples, 128)
-        self.batchSizeZ = 10
+        self.batchSizeN = min(self.data.nSamples, 256)
+        self.batchSizeZ = 3
         self.pfNet = PfNet(dim_z)
-        self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=3e-3)
+        self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-1)
         self.pcNet = Pc(dim_z, rom.mesh.nCells)
         if __debug__:
             # deletes old log file
@@ -78,20 +87,17 @@ class GenerativeSurrogate:
         pass
 
     def loss_pf(self, predOut, batchSamples):
+        eps = 1e-16
         return -torch.dot(self.data.microstructImg[batchSamples, :].flatten(),
-                          torch.mean(torch.log(predOut), dim=2).flatten()) - \
+                          torch.mean(torch.log(predOut + eps), dim=2).flatten()) - \
                 torch.dot(1 - self.data.microstructImg[batchSamples, :].flatten(),
-                          torch.mean(torch.log(1 - predOut), dim=2).flatten())
+                          torch.mean(torch.log(1 - predOut + eps), dim=2).flatten())
 
     def pfStep(self, batchSamples):
         # One training step
         # batchSamples are indices of the samples contained in the batch
         # This needs to be replaced by the (approximate) posterior on z!!
         z = torch.randn(self.batchSizeN, self.batchSizeZ, self.dim_z)
-        # print('z0 = ', z.nelement())
-        # # Same sample for z is valid in every pixel of the image
-        # z = z.expand(self.batchSizeN, self.data.imgResolution**2, self.batchSizeZ, self.dim_z)
-        # print('z1 = ', z.nelement())
         pred = self.pfNet(z, self.data.imgX)
         loss = self.loss_pf(pred, batchSamples)
         if __debug__:

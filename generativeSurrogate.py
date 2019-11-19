@@ -104,7 +104,7 @@ model = gs.GenerativeSurrogate(rom, trainingData, dim_z)
 # In[9]:
 
 
-steps = int(150)
+steps = int(20)
 for s in range(steps):
     print('step = ', s)
     batchSamples = torch.LongTensor(model.batchSizeN).random_(0, trainingData.nSamples)
