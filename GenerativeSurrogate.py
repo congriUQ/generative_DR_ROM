@@ -7,6 +7,7 @@ from torch import optim
 import matplotlib.pyplot as plt
 import matplotlib.colorbar as cb
 import time
+from torch.utils.tensorboard import SummaryWriter
 
 
 class Pc(nn.Module):
@@ -68,15 +69,16 @@ class GenerativeSurrogate:
         self.data = data
         self.dim_z = dim_z
         self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
-        self.batchSizeN = min(self.data.nSamples, 256)
-        self.batchSizeZ = 3
+        self.batchSizeN = min(self.data.nSamples, 128)
+        self.batchSizeZ = 20
         self.pfNet = PfNet(dim_z)
-        self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-1)
+        self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-3)
         self.pcNet = Pc(dim_z, rom.mesh.nCells)
         if __debug__:
             # deletes old log file
             self.log_pf_loss = open('./log_pf_loss.txt', 'w+')
             self.log_pf_loss.close()
+            self.writer = SummaryWriter('runs/gendrrom', flush_secs=5)        # for tensorboard
 
     def fit(self):
         # method to train the model
@@ -105,7 +107,8 @@ class GenerativeSurrogate:
             self.log_pf_loss = open('./log_pf_loss.txt', 'a+')
             self.log_pf_loss.write(str(loss.detach().numpy()) + '\n')
             self.log_pf_loss.close()
-
+            self.writer.add_scalar('Loss/train', loss)
+            self.writer.close()
         loss.backward()
         self.pfOpt.step()
         self.pfOpt.zero_grad()
@@ -127,14 +130,14 @@ class GenerativeSurrogate:
         cb_ax = cb.make_axes(ax[0], location='left', shrink=.35, anchor=(-5.0, .5), ticklocation='left')
         cbr = plt.colorbar(mpbl, cax=cb_ax[0])
         # fig.colorbar(mpbl, ax=ax[0], location='left', pad=0.0)
-        ax[0].set_title('p(lambda| z_1)')
+        ax[0].set_title('p(lambda| z_0)')
         ax[0].set_position(pos)
         ax[1].imshow(torch.reshape(pred_mean,
                                    (self.data.imgResolution, self.data.imgResolution)).detach().numpy() > .5,
                      cmap='binary')
         ax[1].set_xticks([], [])
         ax[1].set_yticks([], [])
-        ax[1].set_title('p(lambda) > .5')
+        ax[1].set_title('p(lambda| z_0) > .5')
         ax[2].imshow((torch.reshape(samples[:, :, 0], (self.data.imgResolution, self.data.imgResolution)) >
                       torch.rand(self.data.imgResolution, self.data.imgResolution)).detach().numpy(),
                      cmap='binary')
