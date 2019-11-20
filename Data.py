@@ -117,7 +117,7 @@ class StokesData(Data):
                 try:
                     microstructureFileName = self.path + 'microstructureInformation' + str(n) + '.mat'
                     microstructFile = sio.loadmat(microstructureFileName)
-                except:
+                except FileNotFoundError:
                     microstructureFileName = self.path + 'microstructureInformation_nomesh' + str(n) + '.mat'
                     microstructFile = sio.loadmat(microstructureFileName)
                 self.microstructR.append(microstructFile['diskRadii'].flatten())
@@ -127,7 +127,7 @@ class StokesData(Data):
                     self.microstructImg[i] = torch.tensor(np.load((self.path + 'microstructImg' +
                                                         str(n) + '_res=' + str(self.imgResolution)) + '.npy'),
                                                           dtype=torch.bool)
-                except:
+                except FileNotFoundError:
                     # If not transformed to image yet --
                     # should only happen for the first sample
                     self.input2img(save=True)
@@ -171,6 +171,14 @@ class StokesData(Data):
         self.microstructImg = self.microstructImg.type(self.dtype)
         # CrossEntropyLoss wants dtype long == int64
         # self.microstructImg = self.microstructImg.type(torch.long)
+
+    def reshapeInputImg(self):
+        # Reshapes flattened input data to 2D image of imgResolution x imgResolution
+        # Should be a tensor ox shape (batchsize x channels x nPixelsH x nPixelsW)
+        tmp = torch.zeros(self.nSamples, 1, self.imgResolution, self.imgResolution, dtype=self.dtype)
+        for n in range(self.nSamples):
+            tmp[n, 0, :, :] = torch.reshape(self.microstructImg[n], (self.imgResolution, self.imgResolution))
+        self.microstructImg = tmp
 
     def plotMicrostruct(self, sampleNumber):
         if len(self.microstructImg) == 0:

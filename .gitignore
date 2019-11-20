@@ -27,7 +27,7 @@ slprj/
 
 # folders
 data/
-.idea/*
+.idea/
 .ipynb_checkpoints/*
 runs/
 __pycache__/
@@ -47,4 +47,4 @@ __pycache__/
 
 
 # other
-log_pf_loss.txt
+./log_pf_loss.txt
