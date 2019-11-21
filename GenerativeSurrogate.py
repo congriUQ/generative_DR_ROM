@@ -11,6 +11,18 @@ from torch.utils.tensorboard import SummaryWriter
 import datetime
 
 
+class CoarseSolver(torch.autograd.Function):
+    """This implements the Darcy ROM as a torch autograd function"""
+
+    @staticmethod
+    def forward(ctx, input):
+        pass
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        pass
+
+
 class PcNet(nn.Module):
     # mapping from latent z-space to effective diffusivities lambda
     def __init__(self, dim_z, rom_nCells):
@@ -20,47 +32,6 @@ class PcNet(nn.Module):
     def forward(self, z):
         lambda_c = self.fc0(z)
         return lambda_c
-
-
-# class PfNet_old(nn.Module):
-#     # From latent z-space to fine scale input data lambda_f
-#     def __init__(self, dim_z, dim_x=2):
-#         super(PfNet, self).__init__()
-#         # dim_out_x == dim_out_z if there're no intermediate layers
-#         dim_out_x1 = 4
-#         dim_out_z = 4
-#         dim_out_s = 2
-#         self.fcx0 = nn.Linear(dim_x, dim_out_x1)
-#         self.acx0 = nn.ReLU()
-#         self.fcz0 = nn.Linear(dim_z, dim_out_z)
-#         self.acz0 = nn.ReLU()
-#         self.fcs0 = nn.Linear(dim_out_x1 + dim_out_z, dim_out_s)
-#         self.acs0 = nn.ReLU()
-#         self.fcs1 = nn.Linear(dim_out_s, 1)
-#         self.acs1 = nn.Sigmoid()
-#
-#     def forward(self, z, x):
-#         # z.shape == (batchSizeN, imgResolution**2, batchSizeZ, dim_z)
-#         # x.shape == (imgResolution**2, 2)
-#         out_x = self.fcx0(x)         # out_x.shape = (imgResolution**2, dim_out_x)
-#         out_x = self.acx0(out_x)
-#         out_z = self.fcz0(z)         # out_z.shape = (batchSizeN, imgResolution**2, batchSizeZ, dim_out_z)
-#         out_z = self.acz0(out_z)
-#         zs = out_z.shape
-#         xs = out_x.shape
-#         # Expand coordinate layer output to batchSizeN, batchSizeZ
-#         out_x = out_x.unsqueeze(1)
-#         out_x = out_x.unsqueeze(0)
-#         out_x = out_x.expand(zs[0], xs[0], zs[1], xs[1])
-#         # Expand z layer output to pixels
-#         out_z = out_z.unsqueeze(1)
-#         out_z = out_z.expand(zs[0], xs[0], zs[1], zs[2])
-#         out = torch.cat((out_x, out_z), dim=3)  # out.shape = (batchSizeN, imgResolution**2, batchSizeZ, out_x + out_z)
-#         out = self.fcs0(out)     # out.shape = (batchSizeN, imgResolution**2, batchSizeZ, 1)
-#         out = self.acs0(out)
-#         out = self.fcs1(out)
-#         out = self.acs1(out)
-#         return out
 
 
 class PfNet(nn.Module):
@@ -125,6 +96,7 @@ class GenerativeSurrogate:
                           torch.mean(torch.log(1 - pred + eps), dim=1).flatten())
 
     def loss_pc(self, pred, batchSamples):
+        # needs to be updated to samples of lambda_c!!
         lambda_c_mean = self.lambda_c_mean[batchSamples, :]
         lambda_c_mean = lambda_c_mean.unsqueeze(1)
         lambda_c_mean = lambda_c_mean.expand(pred.shape)

@@ -269,10 +269,11 @@ class FunctionSpace:
 
 
 class StiffnessMatrix:
-    def __init__(self, mesh, funSpace):
+    def __init__(self, mesh, funSpace, ksp):
         self.mesh = mesh
         self.funSpace = funSpace
         self.rangeCells = range(mesh.nCells)  # For assembly. more efficient if only allocated once?
+        self.solver = ksp
 
         self.locStiffGrad = None
         self.globStiffGrad = []
@@ -379,6 +380,9 @@ class StiffnessMatrix:
         self.matrix.setValuesCSR(self.indptr, self.indices, self.assemblyVector.getValues(self.vec_nonzero))
         self.matrix.assemblyBegin()
         self.matrix.assemblyEnd()
+
+        # Everytime the stiffness matrix changes, the solver operators need to be reset
+        self.solver.setOperators(self.matrix)
 
 
 class RightHandSide:
