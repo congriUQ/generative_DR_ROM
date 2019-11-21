@@ -9,19 +9,20 @@ import torch
 
 class Data:
     # Base class for Stokes/Darcy training/testing data
-    def __init__(self, samples, dtype=torch.float):
+    def __init__(self, samplesIn, dtype=torch.float):
         self.dtype = dtype
         self.resolution = 256               # mesh resolution
-        self.samples = samples              # list of sample numbers
-        self.nSamples = len(samples)
+        self.samplesIn = samplesIn              # list of sample numbers
+        self.nSamplesIn = len(samplesIn)
+        self.nSamplesOut = 16             # change this to number of output samples!!
         self.path = ''                    # path to data folder
         self.output = []                  # response field, i.e., output data
         self.input = []
 
 
 class StokesData(Data):
-    def __init__(self, samples):
-        super().__init__(samples)
+    def __init__(self, samplesIn):
+        super().__init__(samplesIn)
         # Number of exclusions
         self.nExclDist = 'logn'                         # Number of exclusions distribution
         self.nExclDistParams = [6.8, .2]
@@ -56,7 +57,7 @@ class StokesData(Data):
         self.imgX = []                                      # Microstructure pixel coordinates
         self.imgResolution = 256
         # Initialization -- dtype will change to self.dtype
-        self.microstructImg = torch.zeros(self.nSamples, self.imgResolution**2, dtype=torch.bool)
+        self.microstructImg = torch.zeros(self.nSamplesIn, self.imgResolution**2, dtype=torch.bool)
 
     def setPathName(self):
         assert len(self.path) == 0, 'Data path already set'
@@ -102,7 +103,7 @@ class StokesData(Data):
 
         i = 0
         sol_quantities = ['P', 'V', 'X']
-        for n in self.samples:
+        for n in self.samplesIn:
             if any(qnt in quantities for qnt in sol_quantities):
                 # to avoid loading overhead
                 solutionFileName = folderName + '/solution' + str(n) + '.mat'
@@ -155,7 +156,7 @@ class StokesData(Data):
 
         # loop over exclusions
         i = 0
-        for n in self.samples:
+        for n in self.samplesIn:
             r2 = self.microstructR[i]**2.0
 
             for nEx in range(len(self.microstructR[i])):
@@ -175,8 +176,8 @@ class StokesData(Data):
     def reshapeInputImg(self):
         # Reshapes flattened input data to 2D image of imgResolution x imgResolution
         # Should be a tensor ox shape (batchsize x channels x nPixelsH x nPixelsW)
-        tmp = torch.zeros(self.nSamples, 1, self.imgResolution, self.imgResolution, dtype=self.dtype)
-        for n in range(self.nSamples):
+        tmp = torch.zeros(self.nSamplesIn, 1, self.imgResolution, self.imgResolution, dtype=self.dtype)
+        for n in range(self.nSamplesIn):
             tmp[n, 0, :, :] = torch.reshape(self.microstructImg[n], (self.imgResolution, self.imgResolution))
         self.microstructImg = tmp
 
