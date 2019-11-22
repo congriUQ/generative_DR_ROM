@@ -9,18 +9,31 @@ import matplotlib.colorbar as cb
 import time
 from torch.utils.tensorboard import SummaryWriter
 import datetime
+import numpy as np
+import petsc4py
+import sys
+petsc4py.init(sys.argv)
+from petsc4py import PETSc
 
 
-class CoarseSolver(torch.autograd.Function):
+class logPcf(torch.autograd.Function):
     """This implements the Darcy ROM as a torch autograd function"""
 
-    @staticmethod
-    def forward(ctx, input):
-        pass
+    def __init__(self, projectionMatrix, precision, rom):
+        self.projectionMatrix = projectionMatrix
+        self.precision = precision
+        self.rom = rom
+        self.lambda_c = PETSc.Vec().createSeq(rom.mesh.nCells)
+
+    def forward(self, ctx, X):
+        # X is typically the log diffusivity, i.e., X = log(lambda_c)
+        self.lambda_c.createWithArray(np.exp(X))
+        self.rom.solve(self.lambda_c)
+        return self.rom.solution
 
     @staticmethod
     def backward(ctx, grad_output):
-        pass
+        return 0
 
 
 class PcNet(nn.Module):
