@@ -7,6 +7,7 @@ import sys
 petsc4py.init(sys.argv)
 from petsc4py import PETSc
 from scipy.integrate import quad
+import torch
 
 
 class Mesh:
@@ -276,7 +277,7 @@ class StiffnessMatrix:
         self.solver = ksp
 
         self.locStiffGrad = None
-        self.globStiffGrad = []
+        self.globStiffGrad = torch.empty((mesh.nEq, mesh.nEl, mesh.nEq))    # note the permutation
         self.globStiffStencil = None
 
         # Stiffness sparsity pattern
@@ -347,7 +348,7 @@ class StiffnessMatrix:
             Ke = sps.csr_matrix((gradLocK[kIndex], (eqInd[0], eqInd[1])))
             Ke_dense = sps.csr_matrix.todense(Ke)
             Ke = sps.csr_matrix(Ke_dense)
-            self.globStiffGrad.append(Ke)
+            self.globStiffGrad[:, e, :] = torch.tensor(Ke_dense)
             globStiffStencil[:, e] = Ke_dense.flatten(order='F')
             e += 1
         globStiffStencil = sps.csr_matrix(globStiffStencil)

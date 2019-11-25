@@ -19,21 +19,20 @@ from petsc4py import PETSc
 class logPcf(torch.autograd.Function):
     """This implements the Darcy ROM as a torch autograd function"""
 
-    def __init__(self, projectionMatrix, precision, rom):
-        self.projectionMatrix = projectionMatrix
-        self.precision = precision
-        self.rom = rom
-        self.lambda_c = PETSc.Vec().createSeq(rom.mesh.nCells)
-
-    def forward(self, ctx, X):
+    @staticmethod
+    def forward(ctx, input):
         # X is typically the log diffusivity, i.e., X = log(lambda_c)
-        self.lambda_c.createWithArray(np.exp(X))
-        self.rom.solve(self.lambda_c)
-        return self.rom.solution
+        out = input**2
+        ctx.save_for_backward(input)
+        return out
 
     @staticmethod
     def backward(ctx, grad_output):
-        return 0
+        input, = ctx.saved_tensors
+        print('input = ', input)
+        grad_input = grad_output.clone()
+        grad_input = 2*input*grad_input
+        return grad_input
 
 
 class PcNet(nn.Module):
@@ -77,11 +76,11 @@ class GenerativeSurrogate:
         self.z_mean = torch.zeros(self.data.nSamplesIn, dim_z, requires_grad=True)
         # self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
         self.batchSizeZ = 1             # only point estimates for the time being
-        self.varDistOpt = optim.SGD([self.z_mean], lr=3e-3)
+        self.varDistOpt = optim.SGD([self.z_mean], lr=1e-3)
 
         self.pfNet = PfNet(dim_z, self.data.imgResolution**2)
         self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=4e-3)
-        self.batchSizeN_pf = min(self.data.nSamplesIn, 256)
+        self.batchSizeN_pf = min(self.data.nSamplesIn, 1024)
 
         self.pcNet = PcNet(dim_z, rom.mesh.nCells)
         self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
@@ -89,7 +88,6 @@ class GenerativeSurrogate:
         self.lambda_c_mean = 3*torch.randn(self.data.nSamplesOut, self.rom.mesh.nCells)
 
         if __debug__:
-            # deletes old log file
             current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
 
@@ -155,10 +153,12 @@ class GenerativeSurrogate:
         eps = 1e-16
         pred_c = self.pcNet(Z[:self.data.nSamplesOut, :])
         # precision of pc still needs to be added!!
-        out = .5*torch.dot((self.lambda_c_mean - pred_c).flatten(), (self.lambda_c_mean - pred_c).flatten())
+        # out = .5*torch.dot((self.lambda_c_mean - pred_c).flatten(), (self.lambda_c_mean - pred_c).flatten())
         pred_f = self.pfNet(Z)
-        out -= torch.dot(self.data.microstructImg.flatten(), torch.log(pred_f + eps).flatten()) + \
-               torch.dot(1 - self.data.microstructImg.flatten(), torch.log(1 - pred_f + eps).flatten())
+        # out -= ... !!
+        out = -(torch.dot(self.data.microstructImg.flatten(), torch.log(pred_f + eps).flatten()) + \
+               torch.dot(1 - self.data.microstructImg.flatten(), torch.log(1 - pred_f + eps).flatten())) + \
+                .5*torch.sum(Z*Z)
         return out
 
     def optLatentDistStep(self):
@@ -167,7 +167,7 @@ class GenerativeSurrogate:
 
         # Z = self.z_mean.clone().detach().requires_grad_(True)
         # optimizer_z = optim.SGD([Z], lr=3e-2)
-        for k in range(5):
+        for k in range(1):
             loss_z = self.neg_log_q_z(self.z_mean)
             loss_z.backward(retain_graph=True)
             self.varDistOpt.step()
@@ -181,6 +181,7 @@ class GenerativeSurrogate:
         # This needs to be replaced by the (approximate) posterior on z!!
         nSamplesZ = 100
         z = torch.randn(1, nSamplesZ, self.dim_z)
+        z = self.z_mean[0, :]
         samples = self.pfNet(z)
         # pred_mean = torch.mean(samples, dim=1)
         mpbl = ax[0].imshow(torch.reshape(samples[0, 0, :],
