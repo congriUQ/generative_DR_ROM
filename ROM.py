@@ -50,10 +50,10 @@ class ROM:
 
     def getAutogradFun(self):
         '''
-        Creates an autograd function of log_pcf
+        Creates an autograd function of ROM
         '''
 
-        class logPcf(torch.autograd.Function):
+        class fROM(torch.autograd.Function):
 
             @staticmethod
             def forward(ctx, X):
@@ -75,5 +75,5 @@ class ROM:
                 self.rhs.rhsStencil.matMultTransposeAdd(self.adjoints, term0, grad)
                 return torch.tensor(grad)
 
-        return logPcf.apply
+        return fROM.apply
 

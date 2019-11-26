@@ -181,7 +181,6 @@ class GenerativeSurrogate:
         # This needs to be replaced by the (approximate) posterior on z!!
         nSamplesZ = 100
         z = torch.randn(1, nSamplesZ, self.dim_z)
-        z = self.z_mean[0, :]
         samples = self.pfNet(z)
         # pred_mean = torch.mean(samples, dim=1)
         mpbl = ax[0].imshow(torch.reshape(samples[0, 0, :],

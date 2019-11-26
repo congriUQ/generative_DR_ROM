@@ -277,7 +277,8 @@ class StiffnessMatrix:
         self.solver = ksp
 
         self.locStiffGrad = None
-        self.globStiffGrad = torch.empty((mesh.nEq, mesh.nEl, mesh.nEq))    # note the permutation
+        # note the permutation; this is for fast computation of gradients via adjoints
+        self.globStiffGrad = torch.empty((mesh.nEq, mesh.nEl, mesh.nEq), requires_grad=False)
         self.globStiffStencil = None
 
         # Stiffness sparsity pattern
