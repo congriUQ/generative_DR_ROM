@@ -109,14 +109,10 @@ class RectangularMesh(Mesh):
         xCoord = np.concatenate((np.array([.0]), np.cumsum(gridX)))
         yCoord = np.concatenate((np.array([.0]), np.cumsum(gridY)))
         n = 0
-        rowIndex = 0
-        for y in yCoord:
-            colIndex = 0
-            for x in xCoord:
-                self.createVertex(np.array([x, y]), globalVertexNumber=n, rowIndex=rowIndex, colIndex=colIndex)
+        for row_index, y in enumerate(yCoord):
+            for col_index, x in enumerate(xCoord):
+                self.createVertex(np.array([x, y]), globalVertexNumber=n, rowIndex=row_index, colIndex=col_index)
                 n += 1
-                colIndex += 1
-            rowIndex += 1
 
         # Create edges
         nx = len(gridX) + 1
@@ -303,15 +299,15 @@ class StiffnessMatrix:
         locIndices0 = np.array([], dtype=np.uint32)
         locIndices1 = np.array([], dtype=np.uint32)
         cllIndex = np.array([], dtype=np.uint32)
+
         for cll in self.mesh.cells:
             equations = np.array([], dtype=np.uint32)
             eqVertices = np.array([], dtype=np.uint32)
-            i = 0
-            for vtx in cll.vertices:
+            for v, vtx in enumerate(cll.vertices):
                 if vtx.equationNumber is not None:
                     equations = np.append(equations, np.array([vtx.equationNumber], dtype=np.uint32))
-                    eqVertices = np.append(eqVertices, np.array([i], dtype=np.uint32))
-                i += 1
+                    eqVertices = np.append(eqVertices, np.array([v], dtype=np.uint32))
+
             eq0, eq1 = np.meshgrid(equations, equations)
             vtx0, vtx1 = np.meshgrid(eqVertices, eqVertices)
             equationIndices0 = np.append(equationIndices0, eq0.flatten())
@@ -341,8 +337,8 @@ class StiffnessMatrix:
         eqInd, kIndex = self.compEquationIndices()
 
         globStiffStencil = np.empty((self.mesh.nEq**2, self.mesh.nCells))
-        e = 0
-        for cll in self.mesh.cells:
+
+        for e, cll in enumerate(self.mesh.cells):
             gradLocK = np.zeros((4, 4, self.mesh.nEl))
             gradLocK[:, :, e] = self.locStiffGrad[e]
             gradLocK = gradLocK.flatten(order='F')
@@ -351,7 +347,7 @@ class StiffnessMatrix:
             Ke = sps.csr_matrix(Ke_dense)
             self.globStiffGrad[:, e, :] = torch.tensor(Ke_dense)
             globStiffStencil[:, e] = Ke_dense.flatten(order='F')
-            e += 1
+
         globStiffStencil = sps.csr_matrix(globStiffStencil)
         globStiffStencil = PETSc.Mat().createAIJ(
             size=globStiffStencil.shape, csr=(globStiffStencil.indptr, globStiffStencil.indices, globStiffStencil.data))
@@ -521,8 +517,7 @@ class RightHandSide:
 
         self.sourceField = np.zeros((4, mesh.nCells))
 
-        e = 0
-        for cll in mesh.cells:
+        for c, cll in enumerate(mesh.cells):
             # Short hand notation
             x0 = cll.vertices[0].coordinates[0]
             x1 = cll.vertices[2].coordinates[0]
@@ -536,15 +531,14 @@ class RightHandSide:
             yII = .5*(y0 + y1) + .5*eta1*(y1 - y0)
 
             source = sourceField(cll.centroid)
-            self.sourceField[0, e] = source*(1.0/cll.surface)*((xI - x1)*(yI - y1) + (xII - x1)*(yII - y1) +
+            self.sourceField[0, c] = source*(1.0/cll.surface)*((xI - x1)*(yI - y1) + (xII - x1)*(yII - y1) +
                                                                (xI - x1)*(yII - y1) + (xII - x1)*(yI - y1))
-            self.sourceField[1, e] = - source*(1.0/cll.surface)*((xI - x0)*(yI - y1) + (xII - x0) * (yII - y1) +
+            self.sourceField[1, c] = - source*(1.0/cll.surface)*((xI - x0)*(yI - y1) + (xII - x0) * (yII - y1) +
                                                                  (xI - x0)*(yII - y1) + (xII - x0)*(yI - y1))
-            self.sourceField[2, e] = source*(1.0/cll.surface)*((xI - x0)*(yI - y0) + (xII - x0)*(yII - y0) +
+            self.sourceField[2, c] = source*(1.0/cll.surface)*((xI - x0)*(yI - y0) + (xII - x0)*(yII - y0) +
                                                                (xI - x0)*(yII - y0) + (xII - x0) * (yI - y0))
-            self.sourceField[3, e] = - source*(1.0/cll.surface)*((xI - x1)*(yI - y0) + (xII - x1)*(yII - y0) +
+            self.sourceField[3, c] = - source*(1.0/cll.surface)*((xI - x1)*(yI - y0) + (xII - x1)*(yII - y0) +
                                                                  (xI - x1)*(yII - y0) + (xII - x1)*(yI - y0))
-            e += 1
 
     def setNaturalRHS(self, mesh, flux):
         # Sets the part of the RHS due to natural BC's and source field
@@ -552,16 +546,13 @@ class RightHandSide:
             self.setFluxBC(mesh, flux)
 
         naturalRHS = np.zeros(mesh.nEq)
-        e = 0
-        for cll in mesh.cells:
-            v = 0
-            for vtx in cll.vertices:
+        for e, cll in enumerate(mesh.cells):
+            for v, vtx in enumerate(cll.vertices):
                 if vtx.equationNumber is not None:
                     naturalRHS[vtx.equationNumber] += self.fluxBC[v, e]
                     if self.sourceField is not None:
                         naturalRHS[vtx.equationNumber] += self.sourceField[v, e]
-                v += 1
-            e += 1
+
         self.naturalRHS.setValues(range(mesh.nEq), naturalRHS)
 
     def findEssentialCells(self, mesh):
@@ -573,18 +564,14 @@ class RightHandSide:
         rhsStencil_np = np.zeros((mesh.nEq, mesh.nCells))
         for c in self.cellsWithEssentialBC:
             essBoundaryValues = np.zeros(4)
-            i = 0
-            for vtx in mesh.cells[c].vertices:
+            for v, vtx in enumerate(mesh.cells[c].vertices):
                 if vtx.isEssential:
-                    essBoundaryValues[i] = vtx.boundaryValue
-                i += 1
+                    essBoundaryValues[v] = vtx.boundaryValue
 
             locEssBC = stiffnessMatrix.locStiffGrad[c] @ essBoundaryValues
-            i = 0
-            for vtx in mesh.cells[c].vertices:
+            for v, vtx in enumerate(mesh.cells[c].vertices):
                 if vtx.equationNumber is not None:
-                    rhsStencil_np[vtx.equationNumber, c] -= locEssBC[i]
-                i += 1
+                    rhsStencil_np[vtx.equationNumber, c] -= locEssBC[v]
 
         # Assemble PETSc matrix from numpy
         for c in self.cellsWithEssentialBC:

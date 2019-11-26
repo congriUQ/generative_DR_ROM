@@ -101,9 +101,8 @@ class StokesData(Data):
                          str(self.boundaryConditions[3]) + 'x[1]_u_y=' + str(self.boundaryConditions[2]) + \
                          str(self.boundaryConditions[3]) + 'x[0]'
 
-        i = 0
         sol_quantities = ['P', 'V', 'X']
-        for n in self.samplesIn:
+        for i, n in enumerate(self.samplesIn):
             if any(qnt in quantities for qnt in sol_quantities):
                 # to avoid loading overhead
                 solutionFileName = folderName + '/solution' + str(n) + '.mat'
@@ -135,7 +134,6 @@ class StokesData(Data):
                     self.microstructImg[i] = torch.tensor(np.load(self.path + 'microstructImg' +
                                                           str(n) + '_res=' + str(self.imgResolution) + '.npy'),
                                                           dtype=torch.bool)
-            i += 1
         if 'IMG' in quantities:
             # Change data type from bool to dtype
             self.microstructImg = self.microstructImg.type(self.dtype)
@@ -155,8 +153,7 @@ class StokesData(Data):
                                  torch.linspace(0, 1, self.imgResolution, dtype=self.dtype)])
 
         # loop over exclusions
-        i = 0
-        for n in self.samplesIn:
+        for i, n in enumerate(self.samplesIn):
             r2 = self.microstructR[i]**2.0
 
             for nEx in range(len(self.microstructR[i])):
@@ -168,7 +165,7 @@ class StokesData(Data):
                 # save to pytorch tensor
                 np.save(self.path + 'microstructImg' + str(n) +
                            '_res=' + str(self.imgResolution), self.microstructImg[i].detach().numpy())
-            i += 1
+
         self.microstructImg = self.microstructImg.type(self.dtype)
         # CrossEntropyLoss wants dtype long == int64
         # self.microstructImg = self.microstructImg.type(torch.long)
