@@ -15,65 +15,66 @@ class Mesh:
         self.vertices = []
         self.edges = []
         self.cells = []
-        self._nVertices = 0
-        self._nEdges = 0
-        self.nCells = 0
-        self.nEq = None
+        self._n_vertices = 0
+        self._n_edges = 0
+        self.n_cells = 0
+        self.n_eq = None
 
-    def createVertex(self, coordinates, globalVertexNumber=None, rowIndex=None, colIndex=None):
+    def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
         # Creates a vertex and appends it to vertex list
-        vtx = Vertex(coordinates, globalVertexNumber, rowIndex, colIndex)
+        vtx = Vertex(coordinates, globalVertexNumber, row_index, col_index)
         self.vertices.append(vtx)
-        self._nVertices += 1
+        self._n_vertices += 1
 
-    def createEdge(self, vtx0, vtx1):
+    def create_edge(self, vtx0, vtx1):
         # Creates an edge between vertices specified by vertex indices and adds it to edge list
         edg = Edge(vtx0, vtx1)
         self.edges.append(edg)
 
         # Link edges to vertices
-        vtx0.addEdge(edg)
-        vtx1.addEdge(edg)
+        vtx0.add_edge(edg)
+        vtx1.add_edge(edg)
 
-        self._nEdges += 1
+        self._n_edges += 1
 
-    def createCell(self, vertices, edges, number=None):
+    def create_cell(self, vertices, edges, number=None):
         # Creates a cell and appends it to cell list
         cll = Cell(vertices, edges, number)
         self.cells.append(cll)
 
         # Link cell to vertices
         for vtx in vertices:
-            vtx.addCell(cll)
+            vtx.add_cell(cll)
 
         # Link cell to edges
         for edg in edges:
-            edg.addCell(cll)
+            edg.add_cell(cll)
 
-        self.nCells += 1
+        self.n_cells += 1
 
-    def setEssentialBoundary(self, locationIndicatorFun, valueFun):
-        # locationIndicatorFun is the indicator function to the essential boundary
-        equationNumber = 0
+    def set_essential_boundary(self, location_indicator_fun, value_fun):
+        # location_indicator_fun is the indicator function to the essential boundary
+        equation_number = 0
         for vtx in self.vertices:
-            if locationIndicatorFun(vtx.coordinates):
-                vtx.isEssential = True
-                vtx.boundaryValue = valueFun(vtx.coordinates)
+            if location_indicator_fun(vtx.coordinates):
+                vtx.is_essential = True
+                vtx.boundary_value = value_fun(vtx.coordinates)
                 for cll in vtx.cells:
-                    cll.containsEssentialVertex = True
+                    cll.contains_essential_vertex = True
             else:
-                vtx.equationNumber = equationNumber
-                equationNumber += 1
-        self.nEq = equationNumber
+                vtx.equation_number = equation_number
+                equation_number += 1
+        self.n_eq = equation_number
 
-    def setNaturalBoundary(self, locationIndicatorFun):
-        # locationIndicatorFun is the indicator function to the natural boundary
-        # locationIndicatorFun should include pointwise essential boundaries, i.e., for essential boundary at
-        # x = 0, y = 0, locationIndicatorFun should indicate the whole domain boundary
+    def set_natural_boundary(self, location_indicator_fun):
+        # location_indicator_fun is the indicator function to the natural boundary
+        # location_indicator_fun should include pointwise essential boundaries, i.e., for essential boundary at
+        # x = 0, y = 0, location_indicator_fun should indicate the whole domain boundary
         for edg in self.edges:
-            if locationIndicatorFun(edg.vertices[0].coordinates) and locationIndicatorFun(edg.vertices[1].coordinates):
+            if location_indicator_fun(edg.vertices[0].coordinates) \
+                    and location_indicator_fun(edg.vertices[1].coordinates):
                 # Both edge vertices are on natural boundary, i.e., edge is natural boundary
-                edg.isNatural = True
+                edg.is_natural = True
 
     def plot(self):
         for vtx in self.vertices:
@@ -97,34 +98,34 @@ class Mesh:
 
 class RectangularMesh(Mesh):
     # Assuming a unit square domain
-    def __init__(self, gridX, gridY=None):
-        # Grid vectors gridX, gridY give the edge lengths
+    def __init__(self, grid_x, grid_y=None):
+        # Grid vectors grid_x, grid_y give the edge lengths
 
         super().__init__()
-        if gridY is None:
+        if grid_y is None:
             # assume square mesh
-            gridY = gridX
+            grid_y = grid_x
 
         # Create vertices
-        xCoord = np.concatenate((np.array([.0]), np.cumsum(gridX)))
-        yCoord = np.concatenate((np.array([.0]), np.cumsum(gridY)))
+        x_coord = np.concatenate((np.array([.0]), np.cumsum(grid_x)))
+        y_coord = np.concatenate((np.array([.0]), np.cumsum(grid_y)))
         n = 0
-        for row_index, y in enumerate(yCoord):
-            for col_index, x in enumerate(xCoord):
-                self.createVertex(np.array([x, y]), globalVertexNumber=n, rowIndex=row_index, colIndex=col_index)
+        for row_index, y in enumerate(y_coord):
+            for col_index, x in enumerate(x_coord):
+                self.create_vertex(np.array([x, y]), globalVertexNumber=n, row_index=row_index, col_index=col_index)
                 n += 1
 
         # Create edges
-        nx = len(gridX) + 1
-        ny = len(gridY) + 1
+        nx = len(grid_x) + 1
+        ny = len(grid_y) + 1
         for y in range(ny):
             for x in range(nx):
                 if self.vertices[x + y*nx].coordinates[0] > 0:
-                    self.createEdge(self.vertices[x + y*nx - 1], self.vertices[x + y*nx])
+                    self.create_edge(self.vertices[x + y*nx - 1], self.vertices[x + y*nx])
         for y in range(ny):
             for x in range(nx):
                 if self.vertices[x + y*nx].coordinates[1] > 0:
-                    self.createEdge(self.vertices[x + (y - 1)*nx], self.vertices[x + y*nx])
+                    self.create_edge(self.vertices[x + (y - 1)*nx], self.vertices[x + y*nx])
 
         # Create cells
         nx -= 1
@@ -136,23 +137,13 @@ class RectangularMesh(Mesh):
                        self.vertices[x + (y + 1)*(nx + 1) + 1], self.vertices[x + (y + 1)*(nx + 1)]]
                 edg = [self.edges[n], self.edges[nx*(ny + 1) + n + y + 1], self.edges[n + nx],
                        self.edges[nx*(ny + 1) + n + y]]
-                self.createCell(vtx, edg, number=n)
+                self.create_cell(vtx, edg, number=n)
                 n += 1
 
         # minor stuff
-        self.nElX = len(gridX)
-        self.nElY = len(gridY)
+        self.nElX = len(grid_x)
+        self.nElY = len(grid_y)
         self.nEl = self.nElX*self.nElY
-        # self.shapeFunGradients = None
-        # self.locStiffGrad = None
-        # self.gradGlobStiff = []
-        # self.globStiffStencil = None
-        #
-        # # Stiffness sparsity pattern
-        # self.K_nnz = None
-        # self.Kvec_nonzero = None
-        # self.K_indptr = None
-        # self.K_indices = None
 
 
 class Cell:
@@ -162,23 +153,23 @@ class Cell:
         self.edges = edges
         self.number = number
         self.centroid = []
-        self.computeCentroid()
+        self.compute_centroid()
         self.surface = self.edges[0].length*self.edges[1].length
-        self.containsEssentialVertex = False
+        self.contains_essential_vertex = False
 
-    def computeCentroid(self):
+    def compute_centroid(self):
         # Compute cell centroid
         self.centroid = np.zeros(2)
         for vtx in self.vertices:
             self.centroid += vtx.coordinates
         self.centroid /= len(self.vertices)
 
-    def deleteEdges(self, indices):
+    def delete_edges(self, indices):
         # Deletes edges according to indices by setting them to None
         for i in indices:
             self.edges[i] = None
 
-    def inside(self, x):
+    def is_inside(self, x):
         # Checks if point x is inside of cell
         return (self.vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
                 <= self.vertices[2].coordinates[0] + np.finfo(float).eps and
@@ -191,9 +182,9 @@ class Edge:
         self.vertices = [vtx0, vtx1]
         self.cells = []
         self.length = np.linalg.norm(vtx0.coordinates - vtx1.coordinates)
-        self.isNatural = False       # True if edge is on natural boundary
+        self.is_natural = False       # True if edge is on natural boundary
 
-    def addCell(self, cell):
+    def add_cell(self, cell):
         self.cells.append(cell)
 
     def plot(self, n):
@@ -204,42 +195,42 @@ class Edge:
 
 
 class Vertex:
-    def __init__(self, coordinates=np.zeros((2, 1)), globalNumber=None, rowIndex=None, colIndex=None):
+    def __init__(self, coordinates=np.zeros((2, 1)), global_number=None, row_index=None, col_index=None):
         self.coordinates = coordinates
         self.cells = []
         self.edges = []
-        self.isEssential = False    # False for natural, True for essential vertex
-        self.boundaryValue = None    # Value for essential boundary
-        self.equationNumber = None   # Equation number of dof belonging to vertex
-        self.globalNumber = globalNumber
-        self.rowIndex = rowIndex
-        self.colIndex = colIndex
+        self.is_essential = False    # False for natural, True for essential vertex
+        self.boundary_value = None    # Value for essential boundary
+        self.equation_number = None   # Equation number of dof belonging to vertex
+        self.global_number = global_number
+        self.row_index = row_index
+        self.col_index = col_index
 
-    def addCell(self, cell):
+    def add_cell(self, cell):
         self.cells.append(cell)
 
-    def addEdge(self, edge):
+    def add_edge(self, edge):
         self.edges.append(edge)
 
     def plot(self):
         p = plt.plot(self.coordinates[0], self.coordinates[1], 'bx', linewidth=2.0, markersize=8.0)
-        plt.text(self.coordinates[0], self.coordinates[1], str(self.globalNumber), color='b')
+        plt.text(self.coordinates[0], self.coordinates[1], str(self.global_number), color='b')
 
 
 class FunctionSpace:
     # Only bilinear is implemented!
     def __init__(self, mesh, typ='bilinear'):
-        self.shapeFunGradients = None
-        self.getShapeFunGradMat(mesh)
+        self.shape_function_gradients = None
+        self.get_shape_function_gradient_matrix(mesh)
 
-    def getShapeFunGradMat(self, mesh):
+    def get_shape_function_gradient_matrix(self, mesh):
         # Computes shape function gradient matrices B, see Fish & Belytshko
 
         # Gauss quadrature points
         xi0 = -1.0 / np.sqrt(3)
         xi1 = 1.0 / np.sqrt(3)
 
-        self.shapeFunGradients = np.empty((8, 4, mesh.nEl))
+        self.shape_function_gradients = np.empty((8, 4, mesh.nEl))
         for e in range(mesh.nEl):
             # short hand notation
             x0 = mesh.cells[e].vertices[0].coordinates[0]
@@ -261,7 +252,7 @@ class FunctionSpace:
 
             # Note:in Gauss quadrature, the differential transforms as dx = (l_x/2) d xi. Hence we take the
             # additional factor of sqrt(A)/2 onto B
-            self.shapeFunGradients[:, :, e] = (1 / (2 * np.sqrt(mesh.cells[e].surface))) * np.concatenate(
+            self.shape_function_gradients[:, :, e] = (1 / (2 * np.sqrt(mesh.cells[e].surface))) * np.concatenate(
                 (B0, B1, B2, B3))
 
 
@@ -269,13 +260,13 @@ class StiffnessMatrix:
     def __init__(self, mesh, funSpace, ksp):
         self.mesh = mesh
         self.funSpace = funSpace
-        self.rangeCells = range(mesh.nCells)  # For assembly. more efficient if only allocated once?
+        self.range_cells = range(mesh.n_cells)  # For assembly. more efficient if only allocated once?
         self.solver = ksp
 
-        self.locStiffGrad = None
+        self.loc_stiff_grad = None
         # note the permutation; this is for fast computation of gradients via adjoints
-        self.globStiffGrad = torch.empty((mesh.nEq, mesh.nEl, mesh.nEq), requires_grad=False)
-        self.globStiffStencil = None
+        self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.nEl, mesh.n_eq), requires_grad=False)
+        self.glob_stiff_stencil = None
 
         # Stiffness sparsity pattern
         self.nnz = None             # number of nonzero components
@@ -284,15 +275,15 @@ class StiffnessMatrix:
         self.indices = None
 
         # Pre-computations
-        self.compGlobStiffStencil()
-        self.compSparsityPattern()
+        self.compute_glob_stiff_stencil()
+        self.find_sparsity_pattern()
 
         # Pre-allocations
-        self.matrix = PETSc.Mat().createAIJ(size=(mesh.nEq, mesh.nEq), nnz=self.nnz)
-        # self.conductivity = PETSc.Vec().createSeq(mesh.nCells)     # permeability/diffusivity vector
-        self.assemblyVector = PETSc.Vec().createSeq(mesh.nEq**2)      # For quick assembly with matrix vector product
+        self.matrix = PETSc.Mat().createAIJ(size=(mesh.n_eq, mesh.n_eq), nnz=self.nnz)
+        # self.conductivity = PETSc.Vec().createSeq(mesh.n_cells)     # permeability/diffusivity vector
+        self.assembly_vector = PETSc.Vec().createSeq(mesh.n_eq**2)      # For quick assembly with matrix vector product
 
-    def compEquationIndices(self):
+    def compute_equation_indices(self):
         # Compute equation indices for direct assembly of stiffness matrix
         equationIndices0 = np.array([], dtype=np.uint32)
         equationIndices1 = np.array([], dtype=np.uint32)
@@ -304,8 +295,8 @@ class StiffnessMatrix:
             equations = np.array([], dtype=np.uint32)
             eqVertices = np.array([], dtype=np.uint32)
             for v, vtx in enumerate(cll.vertices):
-                if vtx.equationNumber is not None:
-                    equations = np.append(equations, np.array([vtx.equationNumber], dtype=np.uint32))
+                if vtx.equation_number is not None:
+                    equations = np.append(equations, np.array([vtx.equation_number], dtype=np.uint32))
                     eqVertices = np.append(eqVertices, np.array([v], dtype=np.uint32))
 
             eq0, eq1 = np.meshgrid(equations, equations)
@@ -315,67 +306,66 @@ class StiffnessMatrix:
             locIndices0 = np.append(locIndices0, vtx0.flatten())
             locIndices1 = np.append(locIndices1, vtx1.flatten())
             cllIndex = np.append(cllIndex, cll.number*np.ones_like(vtx0.flatten()))
-        kIndex = np.ravel_multi_index((locIndices1, locIndices0, cllIndex), (4, 4, self.mesh.nCells), order='F')
-        return [equationIndices0, equationIndices1], kIndex
+        k_index = np.ravel_multi_index((locIndices1, locIndices0, cllIndex), (4, 4, self.mesh.n_cells), order='F')
+        return [equationIndices0, equationIndices1], k_index
 
-    def compLocStiffGrad(self):
+    def compute_loc_stiff_grad(self):
         # Compute local stiffness matrix gradients w.r.t. diffusivities
-        if self.funSpace.shapeFunGradients is None:
-            self.funSpace.getShapeFunGradMat()
+        if self.funSpace.shape_function_gradients is None:
+            self.funSpace.get_shape_function_gradient_matrix()
 
-        self.locStiffGrad = self.mesh.nEl * [np.empty((4, 4))]
+        self.loc_stiff_grad = self.mesh.nEl * [np.empty((4, 4))]
         for e in range(self.mesh.nEl):
-            self.locStiffGrad[e] = \
-                np.transpose(self.funSpace.shapeFunGradients[:, :, e]) @ self.funSpace.shapeFunGradients[:, :, e]
+            self.loc_stiff_grad[e] = np.transpose(self.funSpace.shape_function_gradients[:, :, e])\
+                                     @ self.funSpace.shape_function_gradients[:, :, e]
 
-    def compGlobStiffStencil(self):
+    def compute_glob_stiff_stencil(self):
         # Compute stiffness stencil matrices K_e, such that K can be assembled via K = sum_e (lambda_e*K_e)
         # This can be done much more efficiently, but is precomputed and therefore not bottleneck.
-        if self.locStiffGrad is None:
-            self.compLocStiffGrad()
+        if self.loc_stiff_grad is None:
+            self.compute_loc_stiff_grad()
 
-        eqInd, kIndex = self.compEquationIndices()
+        equation_indices, k_index = self.compute_equation_indices()
 
-        globStiffStencil = np.empty((self.mesh.nEq**2, self.mesh.nCells))
+        glob_stiff_stencil = np.empty((self.mesh.n_eq**2, self.mesh.n_cells))
 
         for e, cll in enumerate(self.mesh.cells):
-            gradLocK = np.zeros((4, 4, self.mesh.nEl))
-            gradLocK[:, :, e] = self.locStiffGrad[e]
-            gradLocK = gradLocK.flatten(order='F')
-            Ke = sps.csr_matrix((gradLocK[kIndex], (eqInd[0], eqInd[1])))
+            grad_loc_k = np.zeros((4, 4, self.mesh.nEl))
+            grad_loc_k[:, :, e] = self.loc_stiff_grad[e]
+            grad_loc_k = grad_loc_k.flatten(order='F')
+            Ke = sps.csr_matrix((grad_loc_k[k_index], (equation_indices[0], equation_indices[1])))
             Ke_dense = sps.csr_matrix.todense(Ke)
-            Ke = sps.csr_matrix(Ke_dense)
-            self.globStiffGrad[:, e, :] = torch.tensor(Ke_dense)
-            globStiffStencil[:, e] = Ke_dense.flatten(order='F')
+            # Ke = sps.csr_matrix(Ke_dense)
+            self.glob_stiff_grad[:, e, :] = torch.tensor(Ke_dense)
+            glob_stiff_stencil[:, e] = Ke_dense.flatten(order='F')
 
-        globStiffStencil = sps.csr_matrix(globStiffStencil)
-        globStiffStencil = PETSc.Mat().createAIJ(
-            size=globStiffStencil.shape, csr=(globStiffStencil.indptr, globStiffStencil.indices, globStiffStencil.data))
-        globStiffStencil.assemblyBegin()
-        globStiffStencil.assemblyEnd()
-        # indptr, colind, val = globStiffStencil.getValuesCSR()
-        # print('PETSc to scipy = ', sps.csr_matrix((val, colind, indptr)))
-        self.globStiffStencil = globStiffStencil
+        glob_stiff_stencil = sps.csr_matrix(glob_stiff_stencil)
+        glob_stiff_stencil = PETSc.Mat().createAIJ(
+            size=glob_stiff_stencil.shape, csr=(glob_stiff_stencil.indptr, glob_stiff_stencil.indices, glob_stiff_stencil.data))
+        glob_stiff_stencil.assemblyBegin()
+        glob_stiff_stencil.assemblyEnd()
 
-    def compSparsityPattern(self):
+        self.glob_stiff_stencil = glob_stiff_stencil
+
+    def find_sparsity_pattern(self):
         # Computes sparsity pattern of stiffness matrix/stiffness matrix vector for fast matrix assembly
-        testVec = PETSc.Vec().createSeq(self.mesh.nCells)
-        testVec.setValues(range(self.mesh.nCells), np.ones(self.mesh.nCells))
-        Kvec = PETSc.Vec().createSeq(self.mesh.nEq**2)
+        test_vec = PETSc.Vec().createSeq(self.mesh.n_cells)
+        test_vec.setValues(range(self.mesh.n_cells), np.ones(self.mesh.n_cells))
+        Kvec = PETSc.Vec().createSeq(self.mesh.n_eq**2)
 
-        self.globStiffStencil.mult(testVec, Kvec)
+        self.glob_stiff_stencil.mult(test_vec, Kvec)
         self.vec_nonzero = np.nonzero(Kvec.array)
         self.nnz = len(self.vec_nonzero[0])     # important for memory allocation
 
-        Ktmp = sps.csr_matrix(np.reshape(Kvec.array, (self.mesh.nEq, self.mesh.nEq), order='F'))
+        Ktmp = sps.csr_matrix(np.reshape(Kvec.array, (self.mesh.n_eq, self.mesh.n_eq), order='F'))
         self.indptr = Ktmp.indptr.copy()     # csr-like indices
         self.indices = Ktmp.indices.copy()
 
     def assemble(self, x):
         # x is numpy vector of permeability/conductivity
-        # self.conductivity.setValues(self.rangeCells, x)
-        self.globStiffStencil.mult(x, self.assemblyVector)
-        self.matrix.setValuesCSR(self.indptr, self.indices, self.assemblyVector.getValues(self.vec_nonzero))
+        # self.conductivity.setValues(self.range_cells, x)
+        self.glob_stiff_stencil.mult(x, self.assembly_vector)
+        self.matrix.setValuesCSR(self.indptr, self.indices, self.assembly_vector.getValues(self.vec_nonzero))
         self.matrix.assemblyBegin()
         self.matrix.assemblyEnd()
 
@@ -386,23 +376,23 @@ class StiffnessMatrix:
 class RightHandSide:
     # This is the finite element force vector
     def __init__(self, mesh):
-        self.vector = PETSc.Vec().createSeq(mesh.nEq)    # Force vector
-        self.fluxBC = None
-        self.sourceField = None
-        self.naturalRHS = PETSc.Vec().createSeq(mesh.nEq)
-        self.cellsWithEssentialBC = []    # precompute for performance
-        self.findEssentialCells(mesh)
+        self.vector = PETSc.Vec().createSeq(mesh.n_eq)    # Force vector
+        self.flux_boundary_condition = None
+        self.source_field = None
+        self.natural_rhs = PETSc.Vec().createSeq(mesh.n_eq)
+        self.cells_with_essential_boundary = []    # precompute for performance
+        self.find_cells_with_essential_boundary(mesh)
         # Use nnz = 0, PETSc will allocate  additional storage by itself
-        self.rhsStencil = PETSc.Mat().createAIJ(size=(mesh.nEq, mesh.nCells), nnz=0)
-        self.rhsStencil.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
+        self.rhs_stencil = PETSc.Mat().createAIJ(size=(mesh.n_eq, mesh.n_cells), nnz=0)
+        self.rhs_stencil.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
 
-    def setFluxBC(self, mesh, flux):
+    def set_flux_boundary_condition(self, mesh, flux):
         # Contribution due to flux boundary conditions
 
-        self.fluxBC = np.zeros((4, mesh.nCells))
+        self.flux_boundary_condition = np.zeros((4, mesh.n_cells))
         for cll in mesh.cells:
             for edg in cll.edges:
-                if edg.isNatural:
+                if edg.is_natural:
                     # Edge is a natural boundary
                     # This is only valid for the unit square domain!
                     # Find the edge outward normal vectors for generalization
@@ -429,7 +419,7 @@ class RightHandSide:
                                 return q*N
 
                             Intgrl = quad(fun, ll[0], ur[0])
-                            self.fluxBC[i, cll.number] += Intgrl[0]
+                            self.flux_boundary_condition[i, cll.number] += Intgrl[0]
 
                     elif edg.vertices[0].coordinates[0] > 1.0 - np.finfo(float).eps and \
                          edg.vertices[1].coordinates[0] > 1.0 - np.finfo(float).eps:
@@ -454,7 +444,7 @@ class RightHandSide:
                                 return q * N
 
                             Intgrl = quad(fun, ll[1], ur[1])
-                            self.fluxBC[i, cll.number] += Intgrl[0]
+                            self.flux_boundary_condition[i, cll.number] += Intgrl[0]
 
                     elif edg.vertices[0].coordinates[1] > 1.0 - np.finfo(float).eps and \
                          edg.vertices[1].coordinates[1] > 1.0 - np.finfo(float).eps:
@@ -479,7 +469,7 @@ class RightHandSide:
                                 return q * N
 
                             Intgrl = quad(fun, ll[0], ur[0])
-                            self.fluxBC[i, cll.number] += Intgrl[0]
+                            self.flux_boundary_condition[i, cll.number] += Intgrl[0]
 
                     elif edg.vertices[0].coordinates[0] < np.finfo(float).eps and \
                          edg.vertices[1].coordinates[0] < np.finfo(float).eps:
@@ -504,9 +494,9 @@ class RightHandSide:
                                 return q * N
 
                             Intgrl = quad(fun, ll[1], ur[1])
-                            self.fluxBC[i, cll.number] += Intgrl[0]
+                            self.flux_boundary_condition[i, cll.number] += Intgrl[0]
 
-    def setSourceField(self, mesh, sourceField):
+    def set_source_field(self, mesh, source_field):
         # Local force vector elements due to source field
 
         # Gauss points
@@ -515,7 +505,7 @@ class RightHandSide:
         eta0 = -1.0/np.sqrt(3)
         eta1 = 1.0/np.sqrt(3)
 
-        self.sourceField = np.zeros((4, mesh.nCells))
+        self.source_field = np.zeros((4, mesh.n_cells))
 
         for c, cll in enumerate(mesh.cells):
             # Short hand notation
@@ -530,58 +520,58 @@ class RightHandSide:
             yI = .5*(y0 + y1) + .5*eta0*(y1 - y0)
             yII = .5*(y0 + y1) + .5*eta1*(y1 - y0)
 
-            source = sourceField(cll.centroid)
-            self.sourceField[0, c] = source*(1.0/cll.surface)*((xI - x1)*(yI - y1) + (xII - x1)*(yII - y1) +
+            source = source_field(cll.centroid)
+            self.source_field[0, c] = source*(1.0/cll.surface)*((xI - x1)*(yI - y1) + (xII - x1)*(yII - y1) +
                                                                (xI - x1)*(yII - y1) + (xII - x1)*(yI - y1))
-            self.sourceField[1, c] = - source*(1.0/cll.surface)*((xI - x0)*(yI - y1) + (xII - x0) * (yII - y1) +
+            self.source_field[1, c] = - source*(1.0/cll.surface)*((xI - x0)*(yI - y1) + (xII - x0) * (yII - y1) +
                                                                  (xI - x0)*(yII - y1) + (xII - x0)*(yI - y1))
-            self.sourceField[2, c] = source*(1.0/cll.surface)*((xI - x0)*(yI - y0) + (xII - x0)*(yII - y0) +
+            self.source_field[2, c] = source*(1.0/cll.surface)*((xI - x0)*(yI - y0) + (xII - x0)*(yII - y0) +
                                                                (xI - x0)*(yII - y0) + (xII - x0) * (yI - y0))
-            self.sourceField[3, c] = - source*(1.0/cll.surface)*((xI - x1)*(yI - y0) + (xII - x1)*(yII - y0) +
+            self.source_field[3, c] = - source*(1.0/cll.surface)*((xI - x1)*(yI - y0) + (xII - x1)*(yII - y0) +
                                                                  (xI - x1)*(yII - y0) + (xII - x1)*(yI - y0))
 
-    def setNaturalRHS(self, mesh, flux):
+    def set_natural_rhs(self, mesh, flux):
         # Sets the part of the RHS due to natural BC's and source field
-        if self.fluxBC is None:
-            self.setFluxBC(mesh, flux)
+        if self.flux_boundary_condition is None:
+            self.set_flux_boundary_condition(mesh, flux)
 
-        naturalRHS = np.zeros(mesh.nEq)
+        natural_rhs = np.zeros(mesh.n_eq)
         for e, cll in enumerate(mesh.cells):
             for v, vtx in enumerate(cll.vertices):
-                if vtx.equationNumber is not None:
-                    naturalRHS[vtx.equationNumber] += self.fluxBC[v, e]
-                    if self.sourceField is not None:
-                        naturalRHS[vtx.equationNumber] += self.sourceField[v, e]
+                if vtx.equation_number is not None:
+                    natural_rhs[vtx.equation_number] += self.flux_boundary_condition[v, e]
+                    if self.source_field is not None:
+                        natural_rhs[vtx.equation_number] += self.source_field[v, e]
 
-        self.naturalRHS.setValues(range(mesh.nEq), naturalRHS)
+        self.natural_rhs.setValues(range(mesh.n_eq), natural_rhs)
 
-    def findEssentialCells(self, mesh):
+    def find_cells_with_essential_boundary(self, mesh):
         for cll in mesh.cells:
-            if cll.containsEssentialVertex:
-                self.cellsWithEssentialBC.append(cll.number)
+            if cll.contains_essential_vertex:
+                self.cells_with_essential_boundary.append(cll.number)
 
-    def setRhsStencil(self, mesh, stiffnessMatrix):
-        rhsStencil_np = np.zeros((mesh.nEq, mesh.nCells))
-        for c in self.cellsWithEssentialBC:
-            essBoundaryValues = np.zeros(4)
+    def set_rhs_stencil(self, mesh, stiffness_matrix):
+        rhs_stencil_np = np.zeros((mesh.n_eq, mesh.n_cells))
+        for c in self.cells_with_essential_boundary:
+            essential_boundary_values = np.zeros(4)
             for v, vtx in enumerate(mesh.cells[c].vertices):
-                if vtx.isEssential:
-                    essBoundaryValues[v] = vtx.boundaryValue
+                if vtx.is_essential:
+                    essential_boundary_values[v] = vtx.boundary_value
 
-            locEssBC = stiffnessMatrix.locStiffGrad[c] @ essBoundaryValues
+            loc_ess_bc = stiffness_matrix.loc_stiff_grad[c] @ essential_boundary_values
             for v, vtx in enumerate(mesh.cells[c].vertices):
-                if vtx.equationNumber is not None:
-                    rhsStencil_np[vtx.equationNumber, c] -= locEssBC[v]
+                if vtx.equation_number is not None:
+                    rhs_stencil_np[vtx.equation_number, c] -= loc_ess_bc[v]
 
         # Assemble PETSc matrix from numpy
-        for c in self.cellsWithEssentialBC:
+        for c in self.cells_with_essential_boundary:
             for vtx in mesh.cells[c].vertices:
-                if vtx.equationNumber is not None:
-                    self.rhsStencil.setValue(vtx.equationNumber, c, rhsStencil_np[vtx.equationNumber, c])
-        self.rhsStencil.assemblyBegin()
-        self.rhsStencil.assemblyEnd()
+                if vtx.equation_number is not None:
+                    self.rhs_stencil.setValue(vtx.equation_number, c, rhs_stencil_np[vtx.equation_number, c])
+        self.rhs_stencil.assemblyBegin()
+        self.rhs_stencil.assemblyEnd()
 
     def assemble(self, x):
         # x is a PETSc vector of conductivity/permeability
-        self.rhsStencil.multAdd(x, self.naturalRHS, self.vector)
+        self.rhs_stencil.multAdd(x, self.natural_rhs, self.vector)
 
