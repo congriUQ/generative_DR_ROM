@@ -18,6 +18,8 @@ class ROM:
         self.stiffnessMatrix = stiffnessMatrix
         self.rhs = rhs
         self.solution = PETSc.Vec().createSeq(mesh.n_eq)
+        # including essential boundary conditions
+        self.full_solution = PETSc.createSeq(mesh.n_vertices)
         self.adjoints = PETSc.Vec().createSeq(mesh.n_eq)
 
         # Preallocated PETSc vector storing the gradient
@@ -30,6 +32,11 @@ class ROM:
         self.rhs.assemble(lmbda)
         # self.stiffnessMatrix.solver.setOperators(self.stiffnessMatrix.matrix)
         self.stiffnessMatrix.solver.solve(self.rhs.vector, self.solution)
+
+    def set_full_solution(self):
+        # adds essential boundary conditions and solution of equation system
+        # solve first!
+        self.mesh.scatter_matrix(self.solution, self.mesh.essential_solution_vector, self.full_solution)
 
     def solve_adjoint(self, grad_output):
         # Call only after stiffness matrix has already been assembled!

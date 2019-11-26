@@ -15,16 +15,21 @@ class Mesh:
         self.vertices = []
         self.edges = []
         self.cells = []
-        self._n_vertices = 0
+        self.n_vertices = 0
         self._n_edges = 0
         self.n_cells = 0
         self.n_eq = None
+
+        # Vector of zeros except of essential boundaries, where it holds the essential boundary value
+        self.essential_solution_vector = []
+        # sparse matrix scattering solution vector from equation to vertex number
+        self.scatter_matrix = []
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
         # Creates a vertex and appends it to vertex list
         vtx = Vertex(coordinates, globalVertexNumber, row_index, col_index)
         self.vertices.append(vtx)
-        self._n_vertices += 1
+        self.n_vertices += 1
 
     def create_edge(self, vtx0, vtx1):
         # Creates an edge between vertices specified by vertex indices and adds it to edge list
@@ -52,6 +57,25 @@ class Mesh:
 
         self.n_cells += 1
 
+    def set_scatter_matrix(self):
+        vtx_list = []
+        eq_list = []
+        for vtx in self.vertices:
+            if not vtx.is_essential:
+                vtx_list.append(vtx.global_number)
+                eq_list.append(vtx.equation_number)
+        indices = torch.LongTensor([vtx_list, eq_list])
+
+        self.scatter_matrix = torch.sparse.FloatTensor(indices, torch.ones(self.n_eq),
+                                                       torch.Size([self.n_vertices, self.n_eq]))
+
+        # dense performs better for the time being -- change back here if that changes
+        # self.scatter_matrix = self.scatter_matrix.to_dense()
+
+        # Best performance has PETSc
+        tmp = sps.csr_matrix(self.scatter_matrix.to_dense())
+        self.scatter_matrix = PETSc.Mat().createAIJ(size=tmp.shape, csr=(tmp.indptr, tmp.indices, tmp.data))
+
     def set_essential_boundary(self, location_indicator_fun, value_fun):
         # location_indicator_fun is the indicator function to the essential boundary
         equation_number = 0
@@ -59,12 +83,15 @@ class Mesh:
             if location_indicator_fun(vtx.coordinates):
                 vtx.is_essential = True
                 vtx.boundary_value = value_fun(vtx.coordinates)
+                self.essential_solution_vector[vtx.global_number] = vtx.boundary_value
                 for cll in vtx.cells:
                     cll.contains_essential_vertex = True
             else:
                 vtx.equation_number = equation_number
                 equation_number += 1
         self.n_eq = equation_number
+
+        self.set_scatter_matrix()
 
     def set_natural_boundary(self, location_indicator_fun):
         # location_indicator_fun is the indicator function to the natural boundary
@@ -75,6 +102,17 @@ class Mesh:
                     and location_indicator_fun(edg.vertices[1].coordinates):
                 # Both edge vertices are on natural boundary, i.e., edge is natural boundary
                 edg.is_natural = True
+
+    def get_interpolation_matrix(self, x):
+        # returns the shape function interpolation matrix on x
+        # x is a np.array of shape N x 2
+        W = np.zeros((x.shape[0], self.n_vertices))
+        for cll in self.cells:
+            # arrays
+            shape_fun_values, glob_vertex_numbers = cll.element_shape_function_values(x)
+            for loc_vertex in range(4):
+                W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]
+        return W
 
     def plot(self):
         for vtx in self.vertices:
@@ -114,6 +152,8 @@ class RectangularMesh(Mesh):
             for col_index, x in enumerate(x_coord):
                 self.create_vertex(np.array([x, y]), globalVertexNumber=n, row_index=row_index, col_index=col_index)
                 n += 1
+
+        self.essential_solution_vector = PETSc.createSeq(self.n_vertices)
 
         # Create edges
         nx = len(grid_x) + 1
@@ -171,11 +211,29 @@ class Cell:
 
     def is_inside(self, x):
         # Checks if point x is inside of cell
-        return (self.vertices[0].coordinates[0] - np.finfo(float).eps < x[0]
-                <= self.vertices[2].coordinates[0] + np.finfo(float).eps and
-                self.vertices[0].coordinates[1] - np.finfo(float).eps < x[1]
-                <= self.vertices[2].coordinates[1] + np.finfo(float).eps)
+        return np.logical_and(np.logical_and(np.logical_and(
+                np.less(self.vertices[0].coordinates[0] - np.finfo(float).eps, x[:, 0]),
+                np.less_equal(x[:, 0], self.vertices[2].coordinates[0] + np.finfo(float).eps)),
+                np.less(self.vertices[0].coordinates[1] - np.finfo(float).eps, x[:, 1])),
+                np.less_equal(x[:, 1], self.vertices[2].coordinates[1] + np.finfo(float).eps))
 
+    def element_shape_function_values(self, x):
+        # Returns a list of the values [N_0^(c)(x), N_1^(c)(x), N_2^(c)(x), N_3^(c)(x)] of the element shape
+        # functions of x, and a list [global_number0, ...,  global_number3] of global vertex numbers
+        shape_fun_values = []
+        glob_vertex_numbers = []
+        isin = self.is_inside(x)
+        shape_fun_values.append(isin*(x[:, 0] - self.vertices[1].coordinates[0]) *
+                                        (x[:, 1] - self.vertices[3].coordinates[1]) / self.surface)
+        shape_fun_values.append(isin*(-(x[:, 0] - self.vertices[0].coordinates[0]) *
+                                        (x[:, 1] - self.vertices[3].coordinates[1]) / self.surface))
+        shape_fun_values.append(isin*(x[:, 0] - self.vertices[0].coordinates[0]) *
+                                        (x[:, 1] - self.vertices[0].coordinates[1]) / self.surface)
+        shape_fun_values.append(isin*(-(x[:, 0] - self.vertices[1].coordinates[0]) *
+                                        (x[:, 1] - self.vertices[0].coordinates[1]) / self.surface))
+        glob_vertex_numbers = [vtx.global_number for vtx in self.vertices]
+
+        return shape_fun_values, glob_vertex_numbers
 
 class Edge:
     def __init__(self, vtx0, vtx1):

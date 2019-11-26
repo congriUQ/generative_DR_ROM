@@ -35,14 +35,24 @@ class LogPcf(torch.autograd.Function):
         return grad_input
 
 
+class PcfNet(nn.Module):
+    # mapping from coarse solution u_c back to fine solution u_f
+    def __init__(self, dim_rom_out, dim_data_out):
+        super(PcfNet, self).__init__()
+        self.fc0 = nn.Linear(dim_rom_out, dim_data_out)
+
+
 class PcNet(nn.Module):
     # mapping from latent z-space to effective diffusivities lambda
     def __init__(self, dim_z, rom_n_cells):
         super(PcNet, self).__init__()
         self.fc0 = nn.Linear(dim_z, rom_n_cells)
+        self.ac0 = nn.Softplus()
 
     def forward(self, z):
         lambda_c = self.fc0(z)
+        # for positiveness -- exp is not necessary!
+        lambda_c = self.ac0(lambda_c)
         return lambda_c
 
 
