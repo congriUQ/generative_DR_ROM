@@ -69,6 +69,8 @@ class PfNet(nn.Module):
 class GenerativeSurrogate:
     # model class
     def __init__(self, rom, data, dim_z):
+        self.dtype = torch.float32
+
         self.rom = rom
         self.data = data
 

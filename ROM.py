@@ -12,16 +12,20 @@ import torch
 
 class ROM:
     def __init__(self, mesh, stiffnessMatrix, rhs):
+        self.dtype = torch.float32
+
         self.mesh = mesh
         self.stiffnessMatrix = stiffnessMatrix
         self.rhs = rhs
         self.solution = PETSc.Vec().createSeq(mesh.n_eq)
         self.adjoints = PETSc.Vec().createSeq(mesh.n_eq)
 
-    def solve(self, x):
-        # x is a 1D torch.tensor of log conductivities/permeabilities
-        lmbda = PETSc.Vec()
-        lmbda.createWithArray(torch.exp(x))
+        # Preallocated PETSc vector storing the gradient
+        self.grad = PETSc.Vec().createSeq(mesh.n_cells)
+
+    def solve(self, lmbda):
+        # lmbda is a 1D numpy array of !positive! conductivities/permeabilities
+        lmbda = PETSc.Vec().createWithArray(lmbda)
         self.stiffnessMatrix.assemble(lmbda)
         self.rhs.assemble(lmbda)
         # self.stiffnessMatrix.solver.setOperators(self.stiffnessMatrix.matrix)
@@ -56,24 +60,22 @@ class ROM:
         class AutogradROM(torch.autograd.Function):
 
             @staticmethod
-            def forward(ctx, x):
-                # x is a torch.tensor with requires_grad=True
-                # x are log diffusivities, i.e., they can be negative
+            def forward(ctx, lmbda):
+                # lmbda is a torch.tensor with requires_grad=True
+                # lmbda are !positive! diffusivities
 
-                self.solve(x)
+                self.solve(lmbda.detach().numpy())
                 return torch.tensor(self.solution.array)
 
             @staticmethod
             def backward(ctx, grad_output):
                 # grad_output = d_log_Pcf_du
                 self.solve_adjoint(grad_output)
-                grad = PETSc.Vec()
-                term0 = PETSc.Vec()
-                term0.createWithArray(- torch.matmul(torch.matmul(self.stiffnessMatrix.globStiffGrad,
-                                                                  torch.tensor(self.solution.array)).t(),
-                                                     torch.tensor(self.adjoints.array)))
-                self.rhs.rhsStencil.matMultTransposeAdd(self.adjoints, term0, grad)
-                return torch.tensor(grad)
+                term0 = PETSc.Vec().createWithArray(-torch.matmul(torch.matmul(self.stiffnessMatrix.glob_stiff_grad,
+                            torch.tensor(self.solution.array, dtype=self.dtype)).t(),
+                                                     torch.tensor(self.adjoints.array, dtype=self.dtype)))
+                self.rhs.rhs_stencil.multTransposeAdd(self.adjoints, term0, self.grad)
+                return torch.tensor(self.grad.array)
 
         return AutogradROM.apply
 
