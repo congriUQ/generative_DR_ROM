@@ -19,6 +19,8 @@ class Data:
         self.output = []                  # response field, i.e., output data
         self.input = []
 
+        self.output_resolution = 128    # resolution of output image interpolation
+
 
 class StokesData(Data):
     def __init__(self, samples_in):

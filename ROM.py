@@ -11,7 +11,7 @@ import torch
 
 
 class ROM:
-    def __init__(self, mesh, stiffnessMatrix, rhs):
+    def __init__(self, mesh, stiffnessMatrix, rhs, out_dim):
         self.dtype = torch.float32
 
         self.mesh = mesh
@@ -20,6 +20,9 @@ class ROM:
         self.solution = PETSc.Vec().createSeq(mesh.n_eq)
         # including essential boundary conditions
         self.full_solution = PETSc.createSeq(mesh.n_vertices)
+        # interpolated to fine scale solution space
+        self.interpolated_solution = PETSc.Vec().createSeq(out_dim)
+
         self.adjoints = PETSc.Vec().createSeq(mesh.n_eq)
 
         # Preallocated PETSc vector storing the gradient
@@ -37,6 +40,10 @@ class ROM:
         # adds essential boundary conditions and solution of equation system
         # solve first!
         self.mesh.scatter_matrix(self.solution, self.mesh.essential_solution_vector, self.full_solution)
+
+    def interpolate_to(self):
+        # interpolates to fine scale solution
+        self.mesh.interpolation_matrix.mult(self.full_solution, self.interpolated_solution)
 
     def solve_adjoint(self, grad_output):
         # Call only after stiffness matrix has already been assembled!

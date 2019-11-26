@@ -24,6 +24,7 @@ class Mesh:
         self.essential_solution_vector = []
         # sparse matrix scattering solution vector from equation to vertex number
         self.scatter_matrix = []
+        self.interpolation_matrix = []
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
         # Creates a vertex and appends it to vertex list
@@ -112,7 +113,10 @@ class Mesh:
             shape_fun_values, glob_vertex_numbers = cll.element_shape_function_values(x)
             for loc_vertex in range(4):
                 W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]
-        return W
+
+        # Convert to PETSc sparse matrix
+        W = sps.csr_matrix(W)
+        self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
 
     def plot(self):
         for vtx in self.vertices:

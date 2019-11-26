@@ -37,9 +37,13 @@ class LogPcf(torch.autograd.Function):
 
 class PcfNet(nn.Module):
     # mapping from coarse solution u_c back to fine solution u_f
-    def __init__(self, dim_rom_out, dim_data_out):
+    def __init__(self, W_cf):
         super(PcfNet, self).__init__()
-        self.fc0 = nn.Linear(dim_rom_out, dim_data_out)
+        # W_cf is a PETSc matrix!
+        self.fc0 = W_cf
+
+    def forward(self):
+        pass
 
 
 class PcNet(nn.Module):
@@ -99,6 +103,13 @@ class GenerativeSurrogate:
         self.batch_size_N_pc = min(self.data.n_samples_out, 256)
         self.lambda_c_mean = 3*torch.randn(self.data.n_samples_out, self.rom.mesh.n_cells)
 
+        # Change for non unit square domains!!
+        xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
+                             np.linspace(0, 1, self.data.output_resolution))
+        X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
+        self.rom.mesh.get_interpolation_matrix(X)
+        self.pcfNet = PcfNet(self.rom.mesh.interpolation_matrix)
+
         if __debug__:
             current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
@@ -125,6 +136,10 @@ class GenerativeSurrogate:
         lambda_c_mean = lambda_c_mean.expand(pred.shape)
         return torch.dot(torch.mean(lambda_c_mean - pred, dim=1).flatten(),
                          torch.mean(lambda_c_mean - pred, dim=1).flatten())
+
+    def loss_pcf(self, pred, batch_samples):
+
+        return None
 
     def pf_step(self, batch_samples):
         # One training step for pf
