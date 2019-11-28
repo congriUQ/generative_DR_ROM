@@ -12,6 +12,8 @@ import torch
 
 class Mesh:
     def __init__(self):
+        self.dtype = torch.float32
+
         self.vertices = []
         self.edges = []
         self.cells = []
@@ -21,9 +23,12 @@ class Mesh:
         self.n_eq = None
 
         # Vector of zeros except of essential boundaries, where it holds the essential boundary value
-        self.essential_solution_vector = []
+        self.essential_solution_vector = None
+        self.essential_solution_vector_torch = None
         # sparse matrix scattering solution vector from equation to vertex number
-        self.scatter_matrix = []
+        self.scatter_matrix = None
+        self.scatter_matrix_torch = None
+        # interpolation matrix for reconstruction in p_cf
         self.interpolation_matrix = []
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
@@ -67,14 +72,14 @@ class Mesh:
                 eq_list.append(vtx.equation_number)
         indices = torch.LongTensor([vtx_list, eq_list])
 
-        self.scatter_matrix = torch.sparse.FloatTensor(indices, torch.ones(self.n_eq),
+        self.scatter_matrix_torch = torch.sparse.FloatTensor(indices, torch.ones(self.n_eq),
                                                        torch.Size([self.n_vertices, self.n_eq]))
 
         # dense performs better for the time being -- change back here if that changes
-        # self.scatter_matrix = self.scatter_matrix.to_dense()
+        self.scatter_matrix_torch = self.scatter_matrix_torch.to_dense()
 
         # Best performance has PETSc
-        tmp = sps.csr_matrix(self.scatter_matrix.to_dense())
+        tmp = sps.csr_matrix(self.scatter_matrix_torch)
         self.scatter_matrix = PETSc.Mat().createAIJ(size=tmp.shape, csr=(tmp.indptr, tmp.indices, tmp.data))
 
     def set_essential_boundary(self, location_indicator_fun, value_fun):
@@ -90,6 +95,7 @@ class Mesh:
             else:
                 vtx.equation_number = equation_number
                 equation_number += 1
+        self.essential_solution_vector_torch = torch.tensor(self.essential_solution_vector.array, dtype=self.dtype)
         self.n_eq = equation_number
 
         self.set_scatter_matrix()
@@ -107,16 +113,26 @@ class Mesh:
     def get_interpolation_matrix(self, x):
         # returns the shape function interpolation matrix on x
         # x is a np.array of shape N x 2
-        W = np.zeros((x.shape[0], self.n_vertices))
+
+        # If points are 'inside' of multiple cells (on edges/vertices),
+        # the shape function values need to be divided accordingly
+        isin_sum = torch.zeros(x.shape[0])
+        for cll in self.cells:
+            isin_sum += cll.is_inside(x)
+
+        # if W is a free parameter, set requires_grad=True
+        W = torch.zeros((x.shape[0], self.n_vertices))
         for cll in self.cells:
             # arrays
             shape_fun_values, glob_vertex_numbers = cll.element_shape_function_values(x)
             for loc_vertex in range(4):
-                W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]
+                W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]/isin_sum
 
-        # Convert to PETSc sparse matrix
-        W = sps.csr_matrix(W)
-        self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
+        # Convert to PETSc sparse matrix for efficiency?
+        # W = sps.csr_matrix(W)
+        # self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
+
+        self.interpolation_matrix = W
 
     def plot(self):
         for vtx in self.vertices:
@@ -157,7 +173,7 @@ class RectangularMesh(Mesh):
                 self.create_vertex(np.array([x, y]), globalVertexNumber=n, row_index=row_index, col_index=col_index)
                 n += 1
 
-        self.essential_solution_vector = PETSc.createSeq(self.n_vertices)
+        self.essential_solution_vector = PETSc.Vec().createSeq(self.n_vertices)
 
         # Create edges
         nx = len(grid_x) + 1

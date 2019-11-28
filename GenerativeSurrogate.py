@@ -51,13 +51,15 @@ class PcNet(nn.Module):
     def __init__(self, dim_z, rom_n_cells):
         super(PcNet, self).__init__()
         self.fc0 = nn.Linear(dim_z, rom_n_cells)
-        self.ac0 = nn.Softplus()
+        self.ac0 = nn.Softplus(beta=1e-1)
 
     def forward(self, z):
-        lambda_c = self.fc0(z)
+        eps = 1e-8
+        x = self.fc0(z)
         # for positiveness -- exp is not necessary!
-        lambda_c = self.ac0(lambda_c)
-        return lambda_c
+        # lambda_c = self.ac0(lambda_c) + eps
+        # lambda_c = torch.exp(lambda_c) + eps
+        return x
 
 
 class PfNet(nn.Module):
@@ -86,29 +88,36 @@ class GenerativeSurrogate:
         self.dtype = torch.float32
 
         self.rom = rom
+        self.rom_autograd = rom.get_autograd_fun()
         self.data = data
 
         self.dim_z = dim_z
-        self.z_mean = torch.zeros(self.data.n_samples_in, dim_z, requires_grad=True)
+        self.z_mean = torch.zeros(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
+                                  dim_z, requires_grad=True)
         # self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
         self.batch_size_z = 1             # only point estimates for the time being
         self.varDistOpt = optim.SGD([self.z_mean], lr=1e-3)
 
         self.pfNet = PfNet(dim_z, self.data.img_resolution**2)
         self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=4e-3)
-        self.batch_size_N_pf = min(self.data.n_samples_in, 1024)
+        self.batch_size_N_unsupervised = min(self.data.n_unsupervised_samples, 128)
+
+        # so far no batched evaluation implemented. FIX THIS!!
+        self.batch_size_N_supervised = min(self.data.n_supervised_samples, 1)
 
         self.pcNet = PcNet(dim_z, rom.mesh.n_cells)
         self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
-        self.batch_size_N_pc = min(self.data.n_samples_out, 256)
-        self.lambda_c_mean = 3*torch.randn(self.data.n_samples_out, self.rom.mesh.n_cells)
+        self.batch_size_N_pc = min(self.data.n_supervised_samples, 256)
+        self.log_lambda_c_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells, requires_grad=True)
 
         # Change for non unit square domains!!
         xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
                              np.linspace(0, 1, self.data.output_resolution))
         X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
+        X = torch.tensor(X)
         self.rom.mesh.get_interpolation_matrix(X)
-        self.pcfNet = PcfNet(self.rom.mesh.interpolation_matrix)
+        # self.pcfNet = PcfNet(self.rom.mesh.interpolation_matrix)
+        self.pcf_opt = optim.Adam([self.log_lambda_c_mean], lr=8e-2)
 
         if __debug__:
             current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -131,29 +140,40 @@ class GenerativeSurrogate:
 
     def loss_pc(self, pred, batch_samples):
         # needs to be updated to samples of lambda_c!!
-        lambda_c_mean = self.lambda_c_mean[batch_samples, :]
-        lambda_c_mean = lambda_c_mean.unsqueeze(1)
-        lambda_c_mean = lambda_c_mean.expand(pred.shape)
-        return torch.dot(torch.mean(lambda_c_mean - pred, dim=1).flatten(),
-                         torch.mean(lambda_c_mean - pred, dim=1).flatten())
+        x = self.log_lambda_c_mean[batch_samples, :]
+        x = x.unsqueeze(1)
+        x = x.expand(pred.shape)
+        return torch.dot(torch.mean(x - pred, dim=1).flatten(),
+                         torch.mean(x - pred, dim=1).flatten())
 
-    def loss_pcf(self, pred, batch_samples):
-
-        return None
+    def loss_pcf(self, pred_cf, pred_c, batch_samples):
+        # this is joint loss of pc and pcf for lambda_c!
+        # print('pred == ', pred)
+        full_pred = self.rom.mesh.scatter_matrix_torch @ pred_cf + self.rom.mesh.essential_solution_vector_torch
+        proj = self.rom.mesh.interpolation_matrix @ full_pred
+        print('sample = ', batch_samples)
+        print('diff = ', torch.sum(torch.abs(self.data.P[batch_samples, :].flatten() - proj)))
+        loss_pcf = torch.dot(self.data.P[batch_samples, :].flatten() - proj,
+                             self.data.P[batch_samples, :].flatten() - proj)
+        x = self.log_lambda_c_mean.flatten()
+        loss_pc = torch.dot(pred_c.flatten() - x, pred_c.flatten() - x)
+        return loss_pcf + loss_pc
 
     def pf_step(self, batch_samples):
         # One training step for pf
         # batch_samples are indices of the samples contained in the batch
         # This needs to be replaced by the (approximate) posterior on z!!
-        # z = torch.randn(self.batch_size_N_pf, self.batch_size_z, self.dim_z)
+        # z = torch.randn(self.batch_size_N_unsupervised, self.batch_size_z, self.dim_z)
         z = self.z_mean[batch_samples, :]
         z = z.unsqueeze(1)
         pred = self.pfNet(z)
         loss = self.loss_pf(pred, batch_samples)
+
         if __debug__:
-            print('loss_pf = ', loss)
+            # print('loss_pf = ', loss)
             self.writer.add_scalar('Loss/train_pf', loss)
             self.writer.close()
+
         loss.backward()
         self.pfOpt.step()
         self.pfOpt.zero_grad()
@@ -167,39 +187,55 @@ class GenerativeSurrogate:
         z = z.unsqueeze(1)
         pred = self.pcNet(z)
         loss = self.loss_pc(pred, batch_samples)
+
         if __debug__:
-            print('loss_pc = ', loss)
+            # print('loss_pc = ', loss)
             self.writer.add_scalar('Loss/train_pc', loss)
             self.writer.close()
+
         loss.backward()
         self.pcOpt.step()
         self.pcOpt.zero_grad()
 
+    def pcf_step(self, batch_samples):
+        # One training step for pcf
+        # Needs to be updated to samples of lambda_c from approximate posterior
+        pred_cf = self.rom_autograd(torch.exp(self.log_lambda_c_mean[batch_samples, :]))
+        pred_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+        loss = self.loss_pcf(pred_cf, pred_c, batch_samples)
+
+        if __debug__:
+            # print('loss_pcf = ', loss)
+            self.writer.add_scalar('Loss/train_pcf', loss)
+            self.writer.close()
+
+        loss.backward()
+        self.pcf_opt.step()
+        self.pcf_opt.zero_grad()
+
     def neg_log_q_z(self, Z):
         # negative latent log distribution over all z's
         eps = 1e-16
-        pred_c = self.pcNet(Z[:self.data.n_samples_out, :])
+        pred_c = self.pcNet(Z[:self.data.n_supervised_samples, :])
         # precision of pc still needs to be added!!
-        # out = .5*torch.dot((self.lambda_c_mean - pred_c).flatten(), (self.lambda_c_mean - pred_c).flatten())
+        out = .5*torch.dot((self.log_lambda_c_mean - pred_c).flatten(), (self.log_lambda_c_mean - pred_c).flatten())
         pred_f = self.pfNet(Z)
         # out -= ... !!
-        out = -(torch.dot(self.data.microstructure_image.flatten(), torch.log(pred_f + eps).flatten()) + \
-               torch.dot(1 - self.data.microstructure_image.flatten(), torch.log(1 - pred_f + eps).flatten())) + \
+        out -= (torch.dot(self.data.microstructure_image.flatten(), torch.log(pred_f + eps).flatten()) +
+               torch.dot(1 - self.data.microstructure_image.flatten(), torch.log(1 - pred_f + eps).flatten())) - \
                 .5*torch.sum(Z*Z)
         return out
 
     def opt_latent_dist_step(self):
         # optimize latent distribution p(lambda_c^n, z^n) for point estimates
-        self.lambda_c_mean = self.pcNet(self.z_mean[:self.data.n_samples_out, :])
+        # self.lambda_c_mean = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
 
-        # Z = self.z_mean.clone().detach().requires_grad_(True)
-        # optimizer_z = optim.SGD([Z], lr=3e-2)
         for k in range(1):
             loss_z = self.neg_log_q_z(self.z_mean)
             loss_z.backward(retain_graph=True)
             self.varDistOpt.step()
             self.varDistOpt.zero_grad()
-        # self.z_mean = Z.detach()
+        # print('z = ', self.z_mean)
 
     def plot_input_reconstruction(self):
         fig, ax = plt.subplots(1, 5)

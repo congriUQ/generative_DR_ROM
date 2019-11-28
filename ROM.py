@@ -19,7 +19,7 @@ class ROM:
         self.rhs = rhs
         self.solution = PETSc.Vec().createSeq(mesh.n_eq)
         # including essential boundary conditions
-        self.full_solution = PETSc.createSeq(mesh.n_vertices)
+        self.full_solution = PETSc.Vec().createSeq(mesh.n_vertices)
         # interpolated to fine scale solution space
         self.interpolated_solution = PETSc.Vec().createSeq(out_dim)
 
@@ -39,11 +39,12 @@ class ROM:
     def set_full_solution(self):
         # adds essential boundary conditions and solution of equation system
         # solve first!
-        self.mesh.scatter_matrix(self.solution, self.mesh.essential_solution_vector, self.full_solution)
+        self.mesh.scatter_matrix.multAdd(self.solution, self.mesh.essential_solution_vector, self.full_solution)
 
     def interpolate_to(self):
         # interpolates to fine scale solution
-        self.mesh.interpolation_matrix.mult(self.full_solution, self.interpolated_solution)
+        # self.mesh.interpolation_matrix.mult(self.full_solution, self.interpolated_solution)
+        self.interpolated_solution = self.mesh.interpolation_matrix @ self.full_solution
 
     def solve_adjoint(self, grad_output):
         # Call only after stiffness matrix has already been assembled!
@@ -79,7 +80,10 @@ class ROM:
                 # lmbda are !positive! diffusivities
 
                 self.solve(lmbda.detach().numpy())
-                return torch.tensor(self.solution.array)
+
+                # scatter essential boundary conditions
+                # self.set_full_solution()
+                return torch.tensor(self.solution.array, dtype=self.dtype)
 
             @staticmethod
             def backward(ctx, grad_output):
@@ -89,7 +93,9 @@ class ROM:
                             torch.tensor(self.solution.array, dtype=self.dtype)).t(),
                                                      torch.tensor(self.adjoints.array, dtype=self.dtype)))
                 self.rhs.rhs_stencil.multTransposeAdd(self.adjoints, term0, self.grad)
-                return torch.tensor(self.grad.array)
+
+                # remove the unsqueeze once batched computation is implemented!!!
+                return torch.tensor(self.grad.array).unsqueeze(0)
 
         return AutogradROM.apply
 
