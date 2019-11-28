@@ -146,15 +146,15 @@ class GenerativeSurrogate:
         return torch.dot(torch.mean(x - pred, dim=1).flatten(),
                          torch.mean(x - pred, dim=1).flatten())
 
-    def loss_pcf(self, pred_cf, pred_c, batch_samples):
+    def loss_pcf(self, uf_pred, pred_c, batch_samples):
         # this is joint loss of pc and pcf for lambda_c!
         # print('pred == ', pred)
-        full_pred = self.rom.mesh.scatter_matrix_torch @ pred_cf + self.rom.mesh.essential_solution_vector_torch
-        proj = self.rom.mesh.interpolation_matrix @ full_pred
+        # full_pred = self.rom.mesh.scatter_matrix_torch @ uf_pred + self.rom.mesh.essential_solution_vector_torch
+        # proj = self.rom.mesh.interpolation_matrix @ full_pred
         print('sample = ', batch_samples)
-        print('diff = ', torch.sum(torch.abs(self.data.P[batch_samples, :].flatten() - proj)))
-        loss_pcf = torch.dot(self.data.P[batch_samples, :].flatten() - proj,
-                             self.data.P[batch_samples, :].flatten() - proj)
+        print('diff = ', torch.sum(torch.abs(self.data.P[batch_samples, :].flatten() - uf_pred)))
+        loss_pcf = torch.dot(self.data.P[batch_samples, :].flatten() - uf_pred,
+                             self.data.P[batch_samples, :].flatten() - uf_pred)
         x = self.log_lambda_c_mean.flatten()
         loss_pc = torch.dot(pred_c.flatten() - x, pred_c.flatten() - x)
         return loss_pcf + loss_pc

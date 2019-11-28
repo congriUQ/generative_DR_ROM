@@ -29,7 +29,8 @@ class Mesh:
         self.scatter_matrix = None
         self.scatter_matrix_torch = None
         # interpolation matrix for reconstruction in p_cf
-        self.interpolation_matrix = []
+        self.interpolation_matrix = None
+        self.interpolation_matrix_torch = None
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
         # Creates a vertex and appends it to vertex list
@@ -129,10 +130,10 @@ class Mesh:
                 W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]/isin_sum
 
         # Convert to PETSc sparse matrix for efficiency?
-        # W = sps.csr_matrix(W)
-        # self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
+        W = sps.csr_matrix(W)
+        self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
 
-        self.interpolation_matrix = W
+        self.interpolation_matrix_torch = W
 
     def plot(self):
         for vtx in self.vertices:
@@ -255,6 +256,7 @@ class Cell:
 
         return shape_fun_values, glob_vertex_numbers
 
+
 class Edge:
     def __init__(self, vtx0, vtx1):
         self.vertices = [vtx0, vtx1]
@@ -343,7 +345,7 @@ class StiffnessMatrix:
 
         self.loc_stiff_grad = None
         # note the permutation; this is for fast computation of gradients via adjoints
-        self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.nEl, mesh.n_eq), requires_grad=False)
+        self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.nEl, mesh.n_eq))
         self.glob_stiff_stencil = None
 
         # Stiffness sparsity pattern
