@@ -1,11 +1,8 @@
 import socket
 import scipy.io as sio
-import scipy.interpolate as interp
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import os
-import sys
 
 '''File for Stokes and Darcy training/test data'''
 
@@ -30,7 +27,7 @@ class Data:
 
 
 class StokesData(Data):
-    def __init__(self, supervised_samples, unsupervised_samples):
+    def __init__(self, supervised_samples=set(), unsupervised_samples=set()):
         super().__init__(supervised_samples, unsupervised_samples)
         # Number of exclusions
         self.n_excl_dist = 'logn'                         # Number of exclusions distribution

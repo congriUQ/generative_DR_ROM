@@ -8,7 +8,9 @@ from torch.utils.tensorboard import SummaryWriter
 import datetime
 import numpy as np
 import myutil as my
-import pickle
+import ROM
+import Data as dta
+
 
 
 class PcfNet(nn.Module):
@@ -60,42 +62,50 @@ class PfNet(nn.Module):
 
 class GenerativeSurrogate:
     # model class
-    def __init__(self, rom, data, dim_z):
-        self.dtype = torch.float32
+    def __init__(self, rom=None, data=None):
+        # rom is only allowed to be None if the model is loaded afterwards
+        if rom is not None:
+            self.dtype = torch.float32
 
-        self.rom = rom
-        self.rom_autograd = rom.get_autograd_fun()
-        self.data = data
+            self.rom = rom
+            self.rom_autograd = rom.get_autograd_fun() if rom is not None else None
 
-        self.dim_z = dim_z
-        self.z_mean = torch.zeros(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
-                                  dim_z, requires_grad=True)
-        self.varDistOpt = optim.SGD([self.z_mean], lr=1e-3)
-        self.batch_size_z = min(self.data.n_unsupervised_samples, 128)   # only point estimates for the time being
+            if data is None:
+                self.data = dta.StokesData()
+            else:
+                self.data = data
 
-        self.pfNet = PfNet(dim_z, self.data.img_resolution**2)
-        self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=4e-3)
-        self.batch_size_N_thetaf = min(self.data.n_unsupervised_samples, 128)
+            self.dim_z = 20
+            self.z_mean = torch.zeros(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
+                                      self.dim_z, requires_grad=True)
+            self.lr_z = 1e-3
+            self.varDistOpt = optim.SGD([self.z_mean], lr=self.lr_z)
+            self.batch_size_z = min(self.data.n_unsupervised_samples, 128)   # only point estimates for the time being
 
-        # so far no batched evaluation implemented. EXTEND THIS!!
-        self.batch_size_N_lambdac = min(self.data.n_supervised_samples, 1)
+            self.pfNet = PfNet(self.dim_z, self.data.img_resolution**2)
+            self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=4e-3)
+            self.batch_size_N_thetaf = min(self.data.n_unsupervised_samples, 128)
 
-        self.pcNet = PcNet(dim_z, rom.mesh.n_cells)
-        self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
-        self.batch_size_N_thetac = min(self.data.n_supervised_samples, 256)
-        self.log_lambda_c_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells, requires_grad=True)
+            # so far no batched evaluation implemented. EXTEND THIS!!
+            self.batch_size_N_lambdac = min(self.data.n_supervised_samples, 1)
+            self.batch_size_N_thetac = min(self.data.n_supervised_samples, 256)
 
-        # Change for non unit square domains!!
-        xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
-                             np.linspace(0, 1, self.data.output_resolution))
-        X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
-        X = torch.tensor(X)
-        self.rom.mesh.get_interpolation_matrix(X)
-        self.pcfOpt = optim.Adam([self.log_lambda_c_mean], lr=8e-2)
+            self.pcNet = PcNet(self.dim_z, rom.mesh.n_cells)
+            self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
+            self.log_lambda_c_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells,
+                                                requires_grad=True)
 
-        if __debug__:
-            current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
+            # Change for non unit square domains!!
+            xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
+                                 np.linspace(0, 1, self.data.output_resolution))
+            X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
+            X = torch.tensor(X)
+            self.rom.mesh.get_interpolation_matrix(X)
+            self.pcfOpt = optim.Adam([self.log_lambda_c_mean], lr=8e-2)
+
+            if __debug__:
+                current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
 
     def fit(self, n_steps=100):
         # method to train the model
@@ -122,7 +132,7 @@ class GenerativeSurrogate:
 
     def predict(self, x):
         # method to predict from the model for a certain input x
-        pass
+        print('This is the prediction routine')
 
     def loss_thetaf(self, pred, batch_samples):
         eps = 1e-16
@@ -222,20 +232,60 @@ class GenerativeSurrogate:
         self.varDistOpt.step()
         self.varDistOpt.zero_grad()
 
-    def save(self):
+    def save(self, path='./model.p'):
         # save the whole model for later use, e.g. inference or training continuation
-        state_dict = {'pfNet_state_dict': self.pfNet.state_dict(),
-                      'pcNet_state_dict': self.pcNet.state_dict(),
-                      'pfNet_optimizer_state_dict': self.pfOpt.state_dict(),
-                      'pcNet_optimizer_state_dict': self.pcOpt.state_dict(),
-                      'pcfOpt_state_dict': self.pcfOpt.state_dict(),
-                      'varDistOpt_state_dict': self.varDistOpt.state_dict(),
+        state_dict = {'dtype': self.dtype,
+                      'rom_state_dict': self.rom.state_dict(),
+                      'dim_z': self.dim_z,
                       'z_mean': self.z_mean,
+                      'varDistOpt_state_dict': self.varDistOpt.state_dict(),
+                      'lr_z': self.lr_z,
+                      'batch_size_z': self.batch_size_z,
+                      'pfNet_state_dict': self.pfNet.state_dict(),
+                      'pfNet_optimizer_state_dict': self.pfOpt.state_dict(),
+                      'batch_size_N_thetaf': self.batch_size_N_thetaf,
+                      'batch_size_N_lambdac': self.batch_size_N_lambdac,
+                      'pcNet_state_dict': self.pcNet.state_dict(),
+                      'pcNet_optimizer_state_dict': self.pcOpt.state_dict(),
+                      'batch_size_N_thetac': self.batch_size_N_thetac,
                       'log_lambda_c_mean': self.log_lambda_c_mean,
+                      'pcfOpt_state_dict': self.pcfOpt.state_dict(),
                       'writer': self.writer}
 
-        torch.save(state_dict, './model')
+        torch.save(state_dict, path)
 
+    def load(self, path='./model.p'):
+        state_dict = torch.load(path)
+        self.load_state_dict(state_dict)
+
+    def load_state_dict(self, state_dict):
+        self.dtype = state_dict['dtype']
+        self.rom = ROM.ROM()
+        self.rom.load_state_dict(state_dict['rom_state_dict'])
+        self.rom_autograd = self.rom.get_autograd_fun()
+        self.data = dta.StokesData()
+        self.dim_z = state_dict['dim_z']
+        self.z_mean = state_dict['z_mean']
+        self.lr_z = state_dict['lr_z']
+        self.varDistOpt = optim.SGD([self.z_mean], self.lr_z)
+        self.varDistOpt.load_state_dict(state_dict['varDistOpt_state_dict'])
+        self.batch_size_z = state_dict['batch_size_z']
+        self.pfNet = PfNet(self.dim_z, self.data.img_resolution**2)
+        self.pfNet.load_state_dict(state_dict['pfNet_state_dict'])
+        self.pfOpt = optim.Adam(self.pfNet.parameters())
+        self.pfOpt.load_state_dict(state_dict['pfNet_optimizer_state_dict'])
+        self.batch_size_N_thetaf = state_dict['batch_size_N_thetaf']
+        self.batch_size_N_lambdac = state_dict['batch_size_N_lambdac']
+        self.pcNet = PcNet(self.dim_z, self.rom.mesh.n_cells)
+        self.pcNet.load_state_dict(state_dict['pcNet_state_dict'])
+        self.pcOpt = optim.Adam(self.pcNet.parameters())
+        self.pcOpt.load_state_dict(state_dict['pcNet_optimizer_state_dict'])
+        self.batch_size_N_thetac = state_dict['batch_size_N_thetac']
+        self.log_lambda_c_mean = state_dict['log_lambda_c_mean']
+        self.pcfOpt = optim.Adam([self.log_lambda_c_mean])
+        self.pcfOpt.load_state_dict(state_dict['pcfOpt_state_dict'])
+        if __debug__:
+            self.writer = state_dict['writer']
 
     def plot_input_reconstruction(self):
         fig, ax = plt.subplots(1, 5)

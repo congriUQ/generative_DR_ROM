@@ -8,33 +8,36 @@ from petsc4py import PETSc
 import numpy as np
 from matplotlib import pyplot as plt
 import torch
+from poisson_fem import PoissonFEM
+
 
 
 class ROM:
-    def __init__(self, mesh, stiffnessMatrix, rhs, out_dim):
-        self.dtype = torch.float32
+    def __init__(self, mesh=None, stiffnessMatrix=None, rhs=None, out_dim=0):
+        # Default values are only allowed if the rom is loaded from a file afterwards
+        if mesh is not None:
+            self.dtype = torch.float32
+            self.mesh = mesh
+            self.stiffnessMatrix = stiffnessMatrix
+            self.rhs = rhs
+            # Contains only natural degrees of freedom -- solution to equation system
+            self.solution = PETSc.Vec().createSeq(mesh.n_eq)
+            # including essential boundary conditions
+            self.full_solution = PETSc.Vec().createSeq(mesh.n_vertices)
+            # interpolated to fine scale solution space
+            self.interpolated_solution = PETSc.Vec().createSeq(out_dim)
 
-        self.mesh = mesh
-        self.stiffnessMatrix = stiffnessMatrix
-        self.rhs = rhs
-        # Contains only natural degrees of freedom -- solution to equation system
-        self.solution = PETSc.Vec().createSeq(mesh.n_eq)
-        # including essential boundary conditions
-        self.full_solution = PETSc.Vec().createSeq(mesh.n_vertices)
-        # interpolated to fine scale solution space
-        self.interpolated_solution = PETSc.Vec().createSeq(out_dim)
+            self.adjoints = PETSc.Vec().createSeq(mesh.n_eq)
 
-        self.adjoints = PETSc.Vec().createSeq(mesh.n_eq)
-
-        # Preallocated PETSc vectors storing the gradients
-        # Grad of rom w.r.t. lambda_c
-        self.grad = PETSc.Vec().createSeq(mesh.n_cells)
-        # outer gradient of loss w.r.t. uf_pred
-        self.grad_uf_pred = PETSc.Vec().createSeq(out_dim)
-        # outer gradient w.r.t. uc including essential boundary conditions
-        self.grad_uc_full = PETSc.Vec().createSeq(mesh.n_vertices)
-        # outer gradient w.r.t. degrees of freedom uc
-        self.grad_uc = PETSc.Vec().createSeq(mesh.n_eq)
+            # Preallocated PETSc vectors storing the gradients
+            # Grad of rom w.r.t. lambda_c
+            self.grad = PETSc.Vec().createSeq(mesh.n_cells)
+            # outer gradient of loss w.r.t. uf_pred
+            self.grad_uf_pred = PETSc.Vec().createSeq(out_dim)
+            # outer gradient w.r.t. uc including essential boundary conditions
+            self.grad_uc_full = PETSc.Vec().createSeq(mesh.n_vertices)
+            # outer gradient w.r.t. degrees of freedom uc
+            self.grad_uc = PETSc.Vec().createSeq(mesh.n_eq)
 
     def solve(self, lmbda):
         # lmbda is a 1D numpy array of !positive! conductivities/permeabilities
@@ -113,6 +116,57 @@ class ROM:
         return AutogradROM.apply
 
     def state_dict(self):
-        state_dict = {'dtype': self.dtype}
+        # dicts may contain only quantities that are necessary for further computation
+        mesh_state_dict = self.mesh.state_dict()
+        rhs_state_dict = self.rhs.state_dict()
+
+        state_dict = {'dtype': self.dtype,
+                      'mesh_state_dict': mesh_state_dict,
+                      'rhs_state_dict': rhs_state_dict,
+                      'solution': self.solution.array,
+                      'full_solution': self.full_solution.array,
+                      'interpolated_solution': self.interpolated_solution.array,
+                      'adjoints': self.adjoints.array,
+                      'grad': self.grad.array,
+                      'grad_uf_pred': self.grad_uf_pred.array,
+                      'grad_uc_full': self.grad_uc_full.array,
+                      'grad_uc': self.grad_uc.array}
         return state_dict
+
+    def save(self, path='./ROM.p'):
+        state_dict = self.state_dict()
+        torch.save(state_dict, path)
+
+    def load(self, path='./ROM.p'):
+        state_dict = torch.load(path)
+        self.load_state_dict(state_dict)
+
+    def load_state_dict(self, state_dict):
+        self.dtype = state_dict['dtype']
+
+        # mesh
+        mesh = PoissonFEM.RectangularMesh()
+        mesh.load_state_dict(state_dict['mesh_state_dict'])
+        self.mesh = mesh
+
+        # stiffness matrix
+        self.stiffnessMatrix = PoissonFEM.StiffnessMatrix(mesh)
+
+        # right hand side
+        self.rhs = PoissonFEM.RightHandSide(mesh)
+        rhs_state_dict = state_dict['rhs_state_dict']
+        self.rhs.vector = PETSc.Vec().createWithArray(rhs_state_dict['vector'])
+        self.rhs.natural_rhs = PETSc.Vec().createWithArray(rhs_state_dict['natural_rhs'])
+        self.rhs.cells_with_essential_boundary = rhs_state_dict['cells_with_essential_boundary']
+        self.rhs.set_rhs_stencil(self.mesh, self.stiffnessMatrix)
+
+        # The stuff below is probably unnecessary because it is recomputed
+        self.solution = PETSc.Vec().createWithArray(state_dict['solution'])
+        self.full_solution = PETSc.Vec().createWithArray(state_dict['full_solution'])
+        self.interpolated_solution = PETSc.Vec().createWithArray(state_dict['interpolated_solution'])
+        self.adjoints = PETSc.Vec().createWithArray(state_dict['adjoints'])
+        self.grad = PETSc.Vec().createWithArray(state_dict['grad'])
+        self.grad_uf_pred = PETSc.Vec().createWithArray(state_dict['grad_uf_pred'])
+        self.grad_uc_full = PETSc.Vec().createWithArray(state_dict['grad_uc_full'])
+        self.grad_uc = PETSc.Vec().createWithArray(state_dict['grad_uc'])
 

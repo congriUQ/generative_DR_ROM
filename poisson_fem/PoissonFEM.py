@@ -225,7 +225,12 @@ class RectangularMesh(Mesh):
         torch.save(state_dict, path)
 
     def load(self, path='./mesh.p'):
+        # loads mesh from pickle file
         state_dict = torch.load(path)
+        self.load_state_dict(state_dict)
+
+    def load_state_dict(self, state_dict):
+        # loads mesh from state_dict
         self.dtype = state_dict['dtype']
         self.vertices = state_dict['vertices']
         self.edges = state_dict['edges']
@@ -376,12 +381,14 @@ class FunctionSpace:
             self.shape_function_gradients[:, :, e] = (1 / (2 * np.sqrt(mesh.cells[e].surface))) * np.concatenate(
                 (B0, B1, B2, B3))
 
+    def state_dict(self):
+        return {'shape_function_gradients': self.shape_function_gradients}
+
 
 class StiffnessMatrix:
-    def __init__(self, mesh, funSpace):
+    def __init__(self, mesh):
         self.mesh = mesh
-        self.funSpace = funSpace
-        self.range_cells = range(mesh.n_cells)  # For assembly. more efficient if only allocated once?
+        self.funSpace = FunctionSpace(mesh)
 
         # Set up solver
         self.solver = PETSc.KSP().create()
@@ -468,7 +475,8 @@ class StiffnessMatrix:
 
         glob_stiff_stencil = sps.csr_matrix(glob_stiff_stencil)
         glob_stiff_stencil = PETSc.Mat().createAIJ(
-            size=glob_stiff_stencil.shape, csr=(glob_stiff_stencil.indptr, glob_stiff_stencil.indices, glob_stiff_stencil.data))
+            size=glob_stiff_stencil.shape, csr=(glob_stiff_stencil.indptr,
+                                                glob_stiff_stencil.indices, glob_stiff_stencil.data))
         glob_stiff_stencil.assemblyBegin()
         glob_stiff_stencil.assemblyEnd()
 
@@ -490,7 +498,6 @@ class StiffnessMatrix:
 
     def assemble(self, x):
         # x is numpy vector of permeability/conductivity
-        # self.conductivity.setValues(self.range_cells, x)
         self.glob_stiff_stencil.mult(x, self.assembly_vector)
         self.matrix.setValuesCSR(self.indptr, self.indices, self.assembly_vector.getValues(self.vec_nonzero))
         self.matrix.assemblyBegin()
@@ -689,4 +696,9 @@ class RightHandSide:
     def assemble(self, x):
         # x is a PETSc vector of conductivity/permeability
         self.rhs_stencil.multAdd(x, self.natural_rhs, self.vector)
+
+    def state_dict(self):
+        return {'vector': self.vector.array,
+                'natural_rhs': self.natural_rhs.array,
+                'cells_with_essential_boundary': self.cells_with_essential_boundary}
 
