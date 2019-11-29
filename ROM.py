@@ -112,3 +112,7 @@ class ROM:
 
         return AutogradROM.apply
 
+    def state_dict(self):
+        state_dict = {'dtype': self.dtype}
+        return state_dict
+

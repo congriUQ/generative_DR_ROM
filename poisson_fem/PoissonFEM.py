@@ -30,7 +30,7 @@ class Mesh:
         self.scatter_matrix_torch = None
         # interpolation matrix for reconstruction in p_cf
         self.interpolation_matrix = None
-        self.interpolation_matrix_torch = None
+        self.interpolation_matrix_sps = None
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
         # Creates a vertex and appends it to vertex list
@@ -133,7 +133,7 @@ class Mesh:
         W = sps.csr_matrix(W)
         self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
 
-        self.interpolation_matrix_torch = W
+        self.interpolation_matrix_sps = W
 
     def plot(self):
         for vtx in self.vertices:
@@ -157,7 +157,7 @@ class Mesh:
 
 class RectangularMesh(Mesh):
     # Assuming a unit square domain
-    def __init__(self, grid_x, grid_y=None):
+    def __init__(self, grid_x=np.ones(4)/4, grid_y=None):
         # Grid vectors grid_x, grid_y give the edge lengths
 
         super().__init__()
@@ -202,9 +202,50 @@ class RectangularMesh(Mesh):
                 n += 1
 
         # minor stuff
-        self.nElX = len(grid_x)
-        self.nElY = len(grid_y)
-        self.nEl = self.nElX*self.nElY
+        self.n_el_x = len(grid_x)
+        self.n_el_y = len(grid_y)
+
+    def state_dict(self):
+        return {'dtype': self.dtype,
+                'vertices': self.vertices,
+                'edges': self.edges,
+                'cells': self.cells,
+                'n_vertices': self.n_vertices,
+                'n_edges': self._n_edges,
+                'n_cells': self.n_cells,
+                'n_eq': self.n_eq,
+                'essential_solution_vector': self.essential_solution_vector.array,
+                'scatter_matrix': self.scatter_matrix_torch,
+                'interpolation_matrix': self.interpolation_matrix_sps,
+                'n_el_x': self.n_el_x,
+                'n_el_y': self.n_el_y}
+
+    def save(self, path='./mesh.p'):
+        state_dict = self.state_dict()
+        torch.save(state_dict, path)
+
+    def load(self, path='./mesh.p'):
+        state_dict = torch.load(path)
+        self.dtype = state_dict['dtype']
+        self.vertices = state_dict['vertices']
+        self.edges = state_dict['edges']
+        self.cells = state_dict['cells']
+        self.n_vertices = state_dict['n_vertices']
+        self._n_edges = state_dict['n_edges']
+        self.n_cells = state_dict['n_cells']
+        self.n_eq = state_dict['n_eq']
+        self.essential_solution_vector = PETSc.Vec().createSeq(self.n_vertices)
+        self.essential_solution_vector.array = state_dict['essential_solution_vector']
+        self.essential_solution_vector_torch = torch.tensor(self.essential_solution_vector.array, dtype=self.dtype)
+        self.scatter_matrix_torch = state_dict['scatter_matrix']
+        tmp = sps.csr_matrix(self.scatter_matrix_torch)
+        self.scatter_matrix = PETSc.Mat().createAIJ(size=tmp.shape, csr=(tmp.indptr, tmp.indices, tmp.data))
+        self.interpolation_matrix_sps = state_dict['interpolation_matrix']
+        W_tmp = self.interpolation_matrix_sps
+        self.interpolation_matrix = \
+            PETSc.Mat().createAIJ(size=W_tmp.shape, csr=(W_tmp.indptr, W_tmp.indices, W_tmp.data))
+        self.n_el_x = state_dict['n_el_x']
+        self.n_el_y = state_dict['n_el_y']
 
 
 class Cell:
@@ -310,8 +351,8 @@ class FunctionSpace:
         xi0 = -1.0 / np.sqrt(3)
         xi1 = 1.0 / np.sqrt(3)
 
-        self.shape_function_gradients = np.empty((8, 4, mesh.nEl))
-        for e in range(mesh.nEl):
+        self.shape_function_gradients = np.empty((8, 4, mesh.n_cells))
+        for e in range(mesh.n_cells):
             # short hand notation
             x0 = mesh.cells[e].vertices[0].coordinates[0]
             x1 = mesh.cells[e].vertices[1].coordinates[0]
@@ -337,15 +378,21 @@ class FunctionSpace:
 
 
 class StiffnessMatrix:
-    def __init__(self, mesh, funSpace, ksp):
+    def __init__(self, mesh, funSpace):
         self.mesh = mesh
         self.funSpace = funSpace
         self.range_cells = range(mesh.n_cells)  # For assembly. more efficient if only allocated once?
-        self.solver = ksp
+
+        # Set up solver
+        self.solver = PETSc.KSP().create()
+        self.solver.setType('preonly')
+        precond = self.solver.getPC()
+        precond.setType('cholesky')
+        self.solver.setFromOptions()  # ???
 
         self.loc_stiff_grad = None
         # note the permutation; this is for fast computation of gradients via adjoints
-        self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.nEl, mesh.n_eq))
+        self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.n_cells, mesh.n_eq))
         self.glob_stiff_stencil = None
 
         # Stiffness sparsity pattern
@@ -394,8 +441,8 @@ class StiffnessMatrix:
         if self.funSpace.shape_function_gradients is None:
             self.funSpace.get_shape_function_gradient_matrix()
 
-        self.loc_stiff_grad = self.mesh.nEl * [np.empty((4, 4))]
-        for e in range(self.mesh.nEl):
+        self.loc_stiff_grad = self.mesh.n_cells * [np.empty((4, 4))]
+        for e in range(self.mesh.n_cells):
             self.loc_stiff_grad[e] = np.transpose(self.funSpace.shape_function_gradients[:, :, e])\
                                      @ self.funSpace.shape_function_gradients[:, :, e]
 
@@ -410,7 +457,7 @@ class StiffnessMatrix:
         glob_stiff_stencil = np.empty((self.mesh.n_eq**2, self.mesh.n_cells))
 
         for e, cll in enumerate(self.mesh.cells):
-            grad_loc_k = np.zeros((4, 4, self.mesh.nEl))
+            grad_loc_k = np.zeros((4, 4, self.mesh.n_cells))
             grad_loc_k[:, :, e] = self.loc_stiff_grad[e]
             grad_loc_k = grad_loc_k.flatten(order='F')
             Ke = sps.csr_matrix((grad_loc_k[k_index], (equation_indices[0], equation_indices[1])))
@@ -508,10 +555,6 @@ class RightHandSide:
                             def fun(y):
                                 q = flux(np.array([1.0, y]))
                                 q = q[0]  # scalar product with boundary
-                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
-                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
-                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
-                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
                                 if i == 0:
                                     N = (1.0 - ur[0]) * (y - ur[1])
                                 elif i == 1:
@@ -533,10 +576,6 @@ class RightHandSide:
                             def fun(x):
                                 q = flux(np.array([x, 1.0]))
                                 q = q[1]  # scalar product with boundary
-                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
-                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
-                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
-                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
                                 if i == 0:
                                     N = (x - ur[0]) * (1.0 - ur[1])
                                 elif i == 1:
@@ -557,11 +596,7 @@ class RightHandSide:
                         for i in range(4):
                             def fun(y):
                                 q = flux(np.array([0.0, y]))
-                                q = - q[0]  # scalar product with boundary
-                                # np.array([(xel[0] - upperRight[0]) * (xel[1] - upperRight[1]),
-                                #           - (xel[0] - lowerLeft[0]) * (xel[1] - upperRight[1]),
-                                #           (xel[0] - lowerLeft[0]) * (xel[1] - lowerLeft[1]),
-                                #           - (xel[0] - upperRight[0]) * (xel[1] - lowerLeft[1])]) / Ael
+                                q = -q[0]  # scalar product with boundary
                                 if i == 0:
                                     N = (- ur[0]) * (y - ur[1])
                                 elif i == 1:

@@ -1,38 +1,14 @@
 '''All generative dimension reduction ROM surrogate model components'''
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributions as dist
 from torch import optim
 import matplotlib.pyplot as plt
 import matplotlib.colorbar as cb
-import time
 from torch.utils.tensorboard import SummaryWriter
 import datetime
 import numpy as np
-import petsc4py
-import sys
-petsc4py.init(sys.argv)
-from petsc4py import PETSc
-
-
-class LogPcf(torch.autograd.Function):
-    """This implements the Darcy ROM as a torch autograd function"""
-
-    @staticmethod
-    def forward(ctx, input):
-        # X is typically the log diffusivity, i.e., X = log(lambda_c)
-        out = input**2
-        ctx.save_for_backward(input)
-        return out
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input, = ctx.saved_tensors
-        print('input = ', input)
-        grad_input = grad_output.clone()
-        grad_input = 2*input*grad_input
-        return grad_input
+import myutil as my
+import pickle
 
 
 class PcfNet(nn.Module):
@@ -94,20 +70,19 @@ class GenerativeSurrogate:
         self.dim_z = dim_z
         self.z_mean = torch.zeros(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
                                   dim_z, requires_grad=True)
-        # self.pz = dist.Normal(torch.tensor(dim_z*[.0]), torch.tensor(dim_z*[1.0]))
-        self.batch_size_z = 1             # only point estimates for the time being
         self.varDistOpt = optim.SGD([self.z_mean], lr=1e-3)
+        self.batch_size_z = min(self.data.n_unsupervised_samples, 128)   # only point estimates for the time being
 
         self.pfNet = PfNet(dim_z, self.data.img_resolution**2)
         self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=4e-3)
-        self.batch_size_N_unsupervised = min(self.data.n_unsupervised_samples, 128)
+        self.batch_size_N_thetaf = min(self.data.n_unsupervised_samples, 128)
 
-        # so far no batched evaluation implemented. FIX THIS!!
-        self.batch_size_N_supervised = min(self.data.n_supervised_samples, 1)
+        # so far no batched evaluation implemented. EXTEND THIS!!
+        self.batch_size_N_lambdac = min(self.data.n_supervised_samples, 1)
 
         self.pcNet = PcNet(dim_z, rom.mesh.n_cells)
         self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
-        self.batch_size_N_pc = min(self.data.n_supervised_samples, 256)
+        self.batch_size_N_thetac = min(self.data.n_supervised_samples, 256)
         self.log_lambda_c_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells, requires_grad=True)
 
         # Change for non unit square domains!!
@@ -116,29 +91,47 @@ class GenerativeSurrogate:
         X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
         X = torch.tensor(X)
         self.rom.mesh.get_interpolation_matrix(X)
-        # self.pcfNet = PcfNet(self.rom.mesh.interpolation_matrix)
-        self.pcf_opt = optim.Adam([self.log_lambda_c_mean], lr=8e-2)
+        self.pcfOpt = optim.Adam([self.log_lambda_c_mean], lr=8e-2)
 
         if __debug__:
             current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
 
-    def fit(self):
+    def fit(self, n_steps=100):
         # method to train the model
-        pass
+        for s in range(n_steps):
+            print('step = ', s)
+            t = my.tic()
+            batch_samples_z = torch.multinomial(torch.ones(self.data.n_unsupervised_samples), self.batch_size_z)
+            self.z_step(batch_samples_z)
+            t = my.toc(t, 'z step')
+            batch_samples_thetaf = torch.multinomial(torch.ones(self.data.n_unsupervised_samples),
+                                                     self.batch_size_N_thetaf)
+            self.thetaf_step(batch_samples_thetaf)
+            t = my.toc(t, 'thetaf step')
+            for k in range(100):
+                batch_samples_lambdac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
+                                                          self.batch_size_N_lambdac)
+                self.lambdac_step(batch_samples_lambdac)
+            t = my.toc(t, 'lambdac step')
+            for k in range(100):
+                batch_samples_thetac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
+                                                         self.batch_size_N_thetac)
+                self.thetac_step(batch_samples_thetac)
+            my.toc(t, 'thetac step')
 
     def predict(self, x):
         # method to predict from the model for a certain input x
         pass
 
-    def loss_pf(self, pred, batch_samples):
+    def loss_thetaf(self, pred, batch_samples):
         eps = 1e-16
         return -torch.dot(self.data.microstructure_image[batch_samples, :].flatten(),
                           torch.mean(torch.log(pred + eps), dim=1).flatten()) - \
                 torch.dot(1 - self.data.microstructure_image[batch_samples, :].flatten(),
                           torch.mean(torch.log(1 - pred + eps), dim=1).flatten())
 
-    def loss_pc(self, pred, batch_samples):
+    def loss_thetac(self, pred, batch_samples):
         # needs to be updated to samples of lambda_c!!
         x = self.log_lambda_c_mean[batch_samples, :]
         x = x.unsqueeze(1)
@@ -146,74 +139,16 @@ class GenerativeSurrogate:
         return torch.dot(torch.mean(x - pred, dim=1).flatten(),
                          torch.mean(x - pred, dim=1).flatten())
 
-    def loss_pcf(self, uf_pred, pred_c, batch_samples):
+    def loss_lambdac(self, uf_pred, pred_c, batch_samples):
         # this is joint loss of pc and pcf for lambda_c!
-        # print('pred == ', pred)
-        # full_pred = self.rom.mesh.scatter_matrix_torch @ uf_pred + self.rom.mesh.essential_solution_vector_torch
-        # proj = self.rom.mesh.interpolation_matrix @ full_pred
-        print('sample = ', batch_samples)
-        print('diff = ', torch.sum(torch.abs(self.data.P[batch_samples, :].flatten() - uf_pred)))
-        loss_pcf = torch.dot(self.data.P[batch_samples, :].flatten() - uf_pred,
+
+        loss_lambdac = torch.dot(self.data.P[batch_samples, :].flatten() - uf_pred,
                              self.data.P[batch_samples, :].flatten() - uf_pred)
         x = self.log_lambda_c_mean.flatten()
-        loss_pc = torch.dot(pred_c.flatten() - x, pred_c.flatten() - x)
-        return loss_pcf + loss_pc
+        loss_thetac = torch.dot(pred_c.flatten() - x, pred_c.flatten() - x)
+        return loss_lambdac + loss_thetac
 
-    def pf_step(self, batch_samples):
-        # One training step for pf
-        # batch_samples are indices of the samples contained in the batch
-        # This needs to be replaced by the (approximate) posterior on z!!
-        # z = torch.randn(self.batch_size_N_unsupervised, self.batch_size_z, self.dim_z)
-        z = self.z_mean[batch_samples, :]
-        z = z.unsqueeze(1)
-        pred = self.pfNet(z)
-        loss = self.loss_pf(pred, batch_samples)
-
-        if __debug__:
-            # print('loss_pf = ', loss)
-            self.writer.add_scalar('Loss/train_pf', loss)
-            self.writer.close()
-
-        loss.backward()
-        self.pfOpt.step()
-        self.pfOpt.zero_grad()
-
-    def pc_step(self, batch_samples):
-        # One training step for pc
-        # batch_samples are indices of the samples contained in the batch
-        # This needs to be replaced by the (approximate) posterior on z!!
-        # z = torch.randn(self.batch_size_N_pc, self.batch_size_z, self.dim_z)
-        z = self.z_mean[batch_samples, :]
-        z = z.unsqueeze(1)
-        pred = self.pcNet(z)
-        loss = self.loss_pc(pred, batch_samples)
-
-        if __debug__:
-            # print('loss_pc = ', loss)
-            self.writer.add_scalar('Loss/train_pc', loss)
-            self.writer.close()
-
-        loss.backward()
-        self.pcOpt.step()
-        self.pcOpt.zero_grad()
-
-    def pcf_step(self, batch_samples):
-        # One training step for pcf
-        # Needs to be updated to samples of lambda_c from approximate posterior
-        pred_cf = self.rom_autograd(torch.exp(self.log_lambda_c_mean[batch_samples, :]))
-        pred_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
-        loss = self.loss_pcf(pred_cf, pred_c, batch_samples)
-
-        if __debug__:
-            # print('loss_pcf = ', loss)
-            self.writer.add_scalar('Loss/train_pcf', loss)
-            self.writer.close()
-
-        loss.backward()
-        self.pcf_opt.step()
-        self.pcf_opt.zero_grad()
-
-    def neg_log_q_z(self, Z):
+    def loss_z(self, Z, batch_samples):
         # negative latent log distribution over all z's
         eps = 1e-16
         pred_c = self.pcNet(Z[:self.data.n_supervised_samples, :])
@@ -221,21 +156,86 @@ class GenerativeSurrogate:
         out = .5*torch.dot((self.log_lambda_c_mean - pred_c).flatten(), (self.log_lambda_c_mean - pred_c).flatten())
         pred_f = self.pfNet(Z)
         # out -= ... !!
-        out -= (torch.dot(self.data.microstructure_image.flatten(), torch.log(pred_f + eps).flatten()) +
-               torch.dot(1 - self.data.microstructure_image.flatten(), torch.log(1 - pred_f + eps).flatten())) - \
-                .5*torch.sum(Z*Z)
+        out -= (torch.dot(self.data.microstructure_image[batch_samples, :].flatten(),
+                          torch.log(pred_f + eps).flatten()) +
+                torch.dot(1 - self.data.microstructure_image[batch_samples, :].flatten(),
+                          torch.log(1 - pred_f + eps).flatten())) - .5*torch.sum(Z*Z)
         return out
 
-    def opt_latent_dist_step(self):
-        # optimize latent distribution p(lambda_c^n, z^n) for point estimates
-        # self.lambda_c_mean = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+    def thetaf_step(self, batch_samples):
+        # One training step for pf
+        # batch_samples are indices of the samples contained in the batch
+        # This needs to be replaced by the (approximate) posterior on z!!
+        z = self.z_mean[batch_samples, :]
+        z = z.unsqueeze(1)
+        pred = self.pfNet(z)
+        loss = self.loss_thetaf(pred, batch_samples)
 
-        for k in range(1):
-            loss_z = self.neg_log_q_z(self.z_mean)
-            loss_z.backward(retain_graph=True)
-            self.varDistOpt.step()
-            self.varDistOpt.zero_grad()
-        # print('z = ', self.z_mean)
+        if __debug__:
+            # print('loss_thetaf = ', loss)
+            self.writer.add_scalar('Loss/train_pf', loss)
+            self.writer.close()
+
+        loss.backward()
+        self.pfOpt.step()
+        self.pfOpt.zero_grad()
+
+    def thetac_step(self, batch_samples):
+        # One training step for pc
+        # batch_samples are indices of the samples contained in the batch
+        # This needs to be replaced by the (approximate) posterior on z!!
+        z = self.z_mean[batch_samples, :]
+        z = z.unsqueeze(1)
+        pred = self.pcNet(z)
+        loss = self.loss_thetac(pred, batch_samples)
+
+        if __debug__:
+            # print('loss_thetac = ', loss)
+            self.writer.add_scalar('Loss/train_pc', loss)
+            self.writer.close()
+
+        loss.backward()
+        self.pcOpt.step()
+        self.pcOpt.zero_grad()
+
+    def lambdac_step(self, batch_samples):
+        # One training step for pcf
+        # Needs to be updated to samples of lambda_c from approximate posterior
+        pred_cf = self.rom_autograd(torch.exp(self.log_lambda_c_mean[batch_samples, :]))
+        pred_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+        loss = self.loss_lambdac(pred_cf, pred_c, batch_samples)
+
+        if __debug__:
+            # print('loss_lambdac = ', loss)
+            self.writer.add_scalar('Loss/train_pcf', loss)
+            self.writer.close()
+
+        loss.backward()
+        self.pcfOpt.step()
+        self.pcfOpt.zero_grad()
+
+    def z_step(self, batch_samples):
+        # optimize latent distribution p(lambda_c^n, z^n) for point estimates
+
+        loss_z = self.loss_z(self.z_mean[batch_samples, :], batch_samples)
+        loss_z.backward(retain_graph=True)
+        self.varDistOpt.step()
+        self.varDistOpt.zero_grad()
+
+    def save(self):
+        # save the whole model for later use, e.g. inference or training continuation
+        state_dict = {'pfNet_state_dict': self.pfNet.state_dict(),
+                      'pcNet_state_dict': self.pcNet.state_dict(),
+                      'pfNet_optimizer_state_dict': self.pfOpt.state_dict(),
+                      'pcNet_optimizer_state_dict': self.pcOpt.state_dict(),
+                      'pcfOpt_state_dict': self.pcfOpt.state_dict(),
+                      'varDistOpt_state_dict': self.varDistOpt.state_dict(),
+                      'z_mean': self.z_mean,
+                      'log_lambda_c_mean': self.log_lambda_c_mean,
+                      'writer': self.writer}
+
+        torch.save(state_dict, './model')
+
 
     def plot_input_reconstruction(self):
         fig, ax = plt.subplots(1, 5)
