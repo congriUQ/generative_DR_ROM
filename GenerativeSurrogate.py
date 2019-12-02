@@ -12,7 +12,6 @@ import ROM
 import Data as dta
 
 
-
 class PcfNet(nn.Module):
     # mapping from coarse solution u_c back to fine solution u_f
     def __init__(self, W_cf):
