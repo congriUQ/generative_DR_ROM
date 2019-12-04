@@ -210,6 +210,30 @@ class StokesData(Data):
             tmp[i, 0, :, :] = torch.reshape(self.microstructure_image[i], (self.img_resolution, self.img_resolution))
         self.microstructure_image = tmp
 
+    # def state_dict(self):
+    #     state_dict = {'dtype': self.dtype,
+    #                   'resolution': self.resolution,
+    #                   'supervised_samples': self.supervised_samples,
+    #                   'n_supervised_samples': self.n_supervised_samples,
+    #                   'unsupervised_samples': self.unsupervised_samples,
+    #                   'n_unsupervised_samples': self.n_unsupervised_samples,
+    #                   'path': self.path,
+    #                   'solution_folder': self.solution_folder,
+    #                   'output_resolution': self.output_resolution,
+    #                   'n_excl_dist': self.n_excl_dist,
+    #                   'n_excl_dist_params': self.n_excl_dist_params,
+    #                   'excl_margins': self.excl_margins,
+    #                   'r_dist': self.r_dist,
+    #                   'r_dist_params': self.r_dist_params,
+    #                   'r_GP_sigma': self.r_GP_sigma,
+    #                   'r_GP_length': self.r_GP_length,
+    #                   'coord_dist': self.coord_dist,
+    #                   'coord_dist_cov': self.coord_dist_cov,
+    #                   'dens_length_scale': self.dens_length_scale,
+    #                   'dens_sigm_scale': self.dens_sigm_scale,
+    #                   'boundary_conditions': self.boundary_conditions,
+    #                   'img_resolution': self.img_resolution}
+
     def plot_microstruct(self, sampleNumber):
         if len(self.microstructure_image) == 0:
             self.input2img()

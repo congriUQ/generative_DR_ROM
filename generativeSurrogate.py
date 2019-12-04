@@ -9,29 +9,36 @@ import torch
 lin_dim_rom = 4                      # Linear number of rom elements
 a = np.array([1, 1, 0])              # Boundary condition function coefficients
 dtype = torch.float                  # Tensor data type
-supervised_samples = {n for n in range(16)}
-unsupervised_samples = {n for n in range(16, 128)}
+n_supervised = 8
+n_unsupervised = 1024
+supervised_samples = {n for n in range(n_supervised)}
+unsupervised_samples = {n for n in range(n_supervised, n_supervised + n_unsupervised)}
 
 # Define mesh and boundary conditions
 mesh = PoissonFEM.RectangularMesh(np.ones(lin_dim_rom)/lin_dim_rom)
 # mesh.plot()
 
+
 def origin(x):
     return np.abs(x[0]) < np.finfo(float).eps and np.abs(x[1]) < np.finfo(float).eps
+
 
 def ess_boundary_fun(x):
     return 0.0
 mesh.set_essential_boundary(origin, ess_boundary_fun)
 
+
 def domain_boundary(x):
     # unit square
     return np.abs(x[0]) < np.finfo(float).eps or np.abs(x[1]) < np.finfo(float).eps or \
-           np.abs(x[0]) > 1.0 - np.finfo(float).eps or np.abs(x[1]) > 1.0 - np.finfo(float).eps
+            np.abs(x[0]) > 1.0 - np.finfo(float).eps or np.abs(x[1]) > 1.0 - np.finfo(float).eps
 mesh.set_natural_boundary(domain_boundary)
+
 
 def flux(x):
     q = np.array([a[0] + a[2]*x[1], a[1] + a[2]*x[0]])
     return q
+
 
 #Specify right hand side and stiffness matrix
 rhs = PoissonFEM.RightHandSide(mesh)
@@ -48,10 +55,12 @@ trainingData.reshape_microstructure_image()
 # define rom
 rom = ROM.ROM(mesh, K, rhs, trainingData.output_resolution**2)
 model = gs.GenerativeSurrogate(rom, trainingData)
-model.fit(n_steps=1)
-# model.save()
-model2 = gs.GenerativeSurrogate()
-model2.load()
-model2.data.__init__(supervised_samples, unsupervised_samples)
-model2.data.read_data()
-model2.fit(n_steps=2)
+
+model.fit(n_steps=400, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
+          z_iterations=25, with_precisions=False)
+model.fit(n_steps=int(1e6), save_iterations=10, thetac_iterations=5000, thetaf_iterations=5, z_iterations=25,
+          with_precisions=True)
+
+
+
+
