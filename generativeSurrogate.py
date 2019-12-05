@@ -4,13 +4,20 @@ import GenerativeSurrogate as gs
 import Data as dta
 import numpy as np
 import torch
+import argparse
+
+parser = argparse.ArgumentParser(description='Script to train the model. First input is number of supervised,'
+                                             ' second input is number of unsupervised samples')
+parser.add_argument(action="store", dest="n_supervised", type=int)
+parser.add_argument(action="store", dest="n_unsupervised", type=int)
+parsed_args = parser.parse_args()
 
 # Some parameters
 lin_dim_rom = 4                      # Linear number of rom elements
 a = np.array([1, 1, 0])              # Boundary condition function coefficients
 dtype = torch.float                  # Tensor data type
-n_supervised = 8
-n_unsupervised = 1024
+n_supervised = parsed_args.n_supervised
+n_unsupervised = parsed_args.n_unsupervised
 supervised_samples = {n for n in range(n_supervised)}
 unsupervised_samples = {n for n in range(n_supervised, n_supervised + n_unsupervised)}
 
