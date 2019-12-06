@@ -3,19 +3,18 @@ import torch
 import torch.nn as nn
 from torch import optim
 import matplotlib.pyplot as plt
-import matplotlib.colorbar as cb
 from torch.utils.tensorboard import SummaryWriter
 import datetime
 import numpy as np
 import myutil as my
 import ROM
 import Data as dta
+import warnings
 
 
 # noinspection PyUnreachableCode
 class GenerativeSurrogate:
-    # model class
-    def __init__(self, rom=None, data=None):
+    def __init__(self, rom=None, data=None, dim_z=20):
         # rom is only allowed to be None if the model is loaded afterwards
         if rom is not None:
             self.dtype = torch.float32
@@ -28,8 +27,11 @@ class GenerativeSurrogate:
             else:
                 self.data = data
 
-            self.dim_z = 20
-            self.z_mean = torch.zeros(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
+            if self.data.n_supervised_samples == 0:
+                warnings.warn('No supervised training data. Train autoencoder only')
+
+            self.dim_z = dim_z
+            self.z_mean = torch.randn(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
                                       self.dim_z, requires_grad=True)
             self.lr_z = 1e-3
             self.zOpt = optim.Adam([self.z_mean], lr=self.lr_z)
@@ -56,7 +58,7 @@ class GenerativeSurrogate:
             X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
             X = torch.tensor(X)
             self.rom.mesh.get_interpolation_matrix(X)
-            self.lambdacOpt = optim.LBFGS([self.log_lambdac_mean])
+            self.lambdacOpt = optim.Adam([self.log_lambdac_mean], lr=1e-3)
             self.taucf = torch.ones(self.data.output_resolution**2)
 
             if __debug__:
@@ -67,8 +69,9 @@ class GenerativeSurrogate:
 
     def fit(self, n_steps=100, z_iterations=10, thetaf_iterations=10, lambdac_iterations=100, thetac_iterations=100,
             save_iterations=20, with_precisions=True):
-        # method to train the model
-        # with_precisions updates the precisions taucf and tauc
+        """
+        method to train the model with_precisions updates the precisions taucf and tauc
+        """
         for s in range(n_steps):
             print('step = ', s)
             t = my.tic()
@@ -86,35 +89,37 @@ class GenerativeSurrogate:
                 self.thetaf_step(batch_samples_thetaf, k)
             t = my.toc(t, 'thetaf step')
 
-            for k in range(self.data.n_supervised_samples):
-                # batch_samples_lambdac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
-                #                                           self.batch_size_N_lambdac)
-                print('sample == ', k)
-                batch_samples_lambdac = k
-                for m in range(lambdac_iterations):
-                    self.lambdac_step(batch_samples_lambdac, m)
-            t = my.toc(t, 'lambdac step')
+            if self.data.n_supervised_samples:
+                # Don't train supervised part if there is no supervised data. Instead, train autoencoder only.
+                for k in range(self.data.n_supervised_samples):
+                    # batch_samples_lambdac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
+                    #                                           self.batch_size_N_lambdac)
+                    print('sample == ', k)
+                    batch_samples_lambdac = k
+                    for m in range(lambdac_iterations):
+                        self.lambdac_step(batch_samples_lambdac, m)
+                t = my.toc(t, 'lambdac step')
 
-            if with_precisions:
-                with torch.no_grad():
-                    eps = 1e-10
-                    uf_pred = torch.zeros_like(self.data.P)
-                    for n in range(self.data.n_supervised_samples):
-                        uf_pred[n] = self.rom_autograd(torch.exp(self.log_lambdac_mean[n]))
-                    self.taucf = torch.tensor(self.data.n_supervised_samples, dtype=self.dtype) / \
-                                                        torch.sum((uf_pred - self.data.P) ** 2 + eps, dim=0)
+                if with_precisions:
+                    with torch.no_grad():
+                        eps = 1e-10
+                        uf_pred = torch.zeros_like(self.data.P)
+                        for n in range(self.data.n_supervised_samples):
+                            uf_pred[n] = self.rom_autograd(torch.exp(self.log_lambdac_mean[n]))
+                        self.taucf = torch.tensor(self.data.n_supervised_samples, dtype=self.dtype) / \
+                                                            torch.sum((uf_pred - self.data.P) ** 2 + eps, dim=0)
 
-            for k in range(thetac_iterations):
-                batch_samples_thetac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
-                                                         self.batch_size_N_thetac)
+                for k in range(thetac_iterations):
+                    batch_samples_thetac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
+                                                             self.batch_size_N_thetac)
                 self.thetac_step(batch_samples_thetac, k)
-            my.toc(t, 'thetac step')
+                my.toc(t, 'thetac step')
 
-            if with_precisions:
-                with torch.no_grad():
-                    log_lambdac_pred = self.pcNet(self.z_mean[:self.data.n_supervised_samples])
-                    self.tauc = torch.tensor(self.batch_size_N_thetac, dtype=self.dtype) / \
-                                torch.sum((log_lambdac_pred.squeeze() - self.log_lambdac_mean) ** 2, dim=0)
+                if with_precisions:
+                    with torch.no_grad():
+                        log_lambdac_pred = self.pcNet(self.z_mean[:self.data.n_supervised_samples])
+                        self.tauc = torch.tensor(self.batch_size_N_thetac, dtype=self.dtype) / \
+                                    torch.sum((log_lambdac_pred.squeeze() - self.log_lambdac_mean) ** 2, dim=0)
 
             if (s + 1) % save_iterations == 0:
                 # + 1 to not save in the very first iteration
@@ -122,19 +127,16 @@ class GenerativeSurrogate:
                 self.save()
                 print('...saving done.')
 
-    def predict(self, testData):
+    def predict(self, testData, z_iterations=1000):
         # method to predict from the model for a certain set of input samples packaged in a StokesData object testData
         # Z holds the latent z representations of the inputs lambdaf
         Z = torch.randn(testData.n_unsupervised_samples, self.dim_z, requires_grad=True)
 
-        # Take same learning rate as was used for training
-        lr = 1e-3
-        print('lr = ', lr)
-        zOptPredict = optim.Adam([Z], lr=lr)
+        zOptPredict = optim.Adam([Z], lr=1e-1)
+        zOptSched = optim.lr_scheduler.ReduceLROnPlateau(zOptPredict, factor=.7, verbose=True)
         # Set proper convergence criterion instead of fixed steps!
-        n_steps = 500
-        for step in range(n_steps):
-            self.z_prediction_step(Z, testData, zOptPredict, step=step)
+        for step in range(z_iterations):
+            self.z_prediction_step(Z, testData, zOptPredict, zOptSched, step=step)
 
         log_lambdac_mean = self.pcNet(Z)
         # Add noise here...
@@ -148,9 +150,9 @@ class GenerativeSurrogate:
     def loss_thetaf(self, lambdaf_pred, batch_samples):
         eps = 1e-16
         return -torch.dot(self.data.microstructure_image[batch_samples, :].flatten(),
-                          torch.mean(torch.log(lambdaf_pred + eps), dim=1).flatten()) - \
-                torch.dot(1 - self.data.microstructure_image[batch_samples, :].flatten(),
-                          torch.mean(torch.log(1 - lambdaf_pred + eps), dim=1).flatten())
+                          torch.mean(torch.log(lambdaf_pred + eps), dim=1).flatten()) \
+               -torch.dot(self.data.microstructure_image_inverted[batch_samples, :].flatten(),
+                          torch.mean(torch.log(1.0 - lambdaf_pred + eps), dim=1).flatten())
 
     def loss_thetac(self, log_lambdac_pred, batch_samples):
         # needs to be updated to samples of lambda_c!!
@@ -185,7 +187,7 @@ class GenerativeSurrogate:
         # out += - ... for readability
         out += -(torch.dot(self.data.microstructure_image[:self.data.n_supervised_samples, :].flatten(),
                            torch.log(lambdaf_pred + eps).flatten()) +
-                 torch.dot(1.0 - self.data.microstructure_image[:self.data.n_supervised_samples, :].flatten(),
+                 torch.dot(self.data.microstructure_image_inverted[:self.data.n_supervised_samples, :].flatten(),
                            torch.log(1.0 - lambdaf_pred + eps).flatten())) \
                + .5*torch.sum(self.z_mean[:self.data.n_supervised_samples, :]**2)
 
@@ -194,7 +196,7 @@ class GenerativeSurrogate:
         # out += - ... for readability
         out += -(torch.dot(self.data.microstructure_image[self.data.n_supervised_samples:, :].flatten(),
                            torch.log(lambdaf_pred + eps).flatten()) +
-                 torch.dot(1.0 - self.data.microstructure_image[self.data.n_supervised_samples:, :].flatten(),
+                 torch.dot(self.data.microstructure_image_inverted[self.data.n_supervised_samples:, :].flatten(),
                            torch.log(1.0 - lambdaf_pred + eps).flatten())) \
                             + .5 * torch.sum(self.z_mean[self.data.n_supervised_samples:, :] ** 2)
         return out
@@ -207,7 +209,7 @@ class GenerativeSurrogate:
         lambdaf_pred = self.pfNet(Z)
         # out += - ... for readability
         out = -(torch.dot(testData.microstructure_image.flatten(), torch.log(lambdaf_pred + eps).flatten()) +
-                torch.dot(1.0 - testData.microstructure_image.flatten(),
+                torch.dot(testData.microstructure_image_inverted.flatten(),
                           torch.log(1.0 - lambdaf_pred + eps).flatten())) + .5*torch.sum(Z**2)
         return out
 
@@ -220,7 +222,7 @@ class GenerativeSurrogate:
         lambdaf_pred = self.pfNet(z)
         loss = self.loss_thetaf(lambdaf_pred, batch_samples)
         assert torch.isfinite(loss)
-        if step % 50:
+        if step % 5 == 0:
             print('loss_f = ', loss.item())
 
         if __debug__:
@@ -257,26 +259,23 @@ class GenerativeSurrogate:
         # One training step for pcf
         # Needs to be updated to samples of lambda_c from approximate posterior
         eps = 1e-12     # for solver stability
-        def closure():
-            self.lambdacOpt.zero_grad()
-            uf_pred = self.rom_autograd(torch.exp(self.log_lambdac_mean[batch_samples, :]) + eps)
-            assert torch.all(torch.isfinite(uf_pred))
-            log_lambdac_pred = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
-            print('log_lambdac_pred = ', log_lambdac_pred)
-            assert torch.all(torch.isfinite(uf_pred))
-            loss = self.loss_lambdac(uf_pred, log_lambdac_pred, batch_samples)
-            assert torch.isfinite(loss)
-            loss.backward()
-            return loss
-            # if step % 100 == 0:
-            #     print('loss_lambda_c = ', loss.item())
+        self.lambdacOpt.zero_grad()
+        uf_pred = self.rom_autograd(torch.exp(self.log_lambdac_mean[batch_samples, :]) + eps)
+        assert torch.all(torch.isfinite(uf_pred))
+        log_lambdac_pred = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+        assert torch.all(torch.isfinite(uf_pred))
+        loss = self.loss_lambdac(uf_pred, log_lambdac_pred, batch_samples)
+        assert torch.isfinite(loss)
+        loss.backward()
+        if step % 250 == 0:
+            print('loss_lambda_c = ', loss.item())
 
         # if __debug__:
         #     # print('loss_lambdac = ', loss)
         #     self.writer.add_scalar('Loss/train_pcf', loss)
         #     self.writer.close()
 
-        self.lambdacOpt.step(closure)
+        self.lambdacOpt.step()
 
     def z_step(self, batch_samples, step=1):
         # optimize latent distribution p(lambda_c^n, z^n) for point estimates
@@ -290,15 +289,16 @@ class GenerativeSurrogate:
         self.zOpt.step()
         self.zOpt.zero_grad()
 
-    def z_prediction_step(self, Z, testData, optimizer, step=1):
+    def z_prediction_step(self, Z, testData, zOptPredict, zOptSched, step=1):
         loss_z = self.loss_z_prediction(Z, testData)
         assert torch.isfinite(loss_z)
         loss_z.backward()
         if step % 100 == 0:
             print('loss_z_prediction = ', loss_z.item())
 
-        optimizer.step()
-        optimizer.zero_grad()
+        zOptPredict.step()
+        zOptPredict.zero_grad()
+        zOptSched.step(loss_z)
 
     def save(self, path='./model.p'):
         # save the whole model for later use, e.g. inference or training continuation
@@ -367,48 +367,57 @@ class GenerativeSurrogate:
             self.writer = state_dict['writer']
 
     def plot_input_reconstruction(self):
-        fig, ax = plt.subplots(1, 5)
+        fig, ax = plt.subplots(2, 4)
         figManager = plt.get_current_fig_manager()
         figManager.window.showMaximized()
         # This needs to be replaced by the (approximate) posterior on z!!
-        n_samples_z = 100
-        z = torch.randn(1, n_samples_z, self.dim_z)
-        samples = self.pfNet(z)
-        # pred_mean = torch.mean(samples, dim=1)
-        mpbl = ax[0].imshow(torch.reshape(samples[0, 0, :],
-                                   (self.data.img_resolution, self.data.img_resolution)).detach().numpy())
-        ax[0].set_xticks([], [])
-        ax[0].set_yticks([], [])
-        pos = ax[0].get_position()
-        cb_ax = cb.make_axes(ax[0], location='left', shrink=.35, anchor=(-5.0, .5), ticklocation='left')
-        cbr = plt.colorbar(mpbl, cax=cb_ax[0])
-        # fig.colorbar(mpbl, ax=ax[0], location='left', pad=0.0)
-        ax[0].set_title('p(lambda| z_0)')
-        ax[0].set_position(pos)
-        ax[1].imshow(torch.reshape(samples[0, 0, :],
-                                   (self.data.img_resolution, self.data.img_resolution)).detach().numpy() > .5,
-                     cmap='binary')
-        ax[1].set_xticks([], [])
-        ax[1].set_yticks([], [])
-        ax[1].set_title('p(lambda| z_0) > .5')
-        ax[2].imshow((torch.reshape(samples[0, 1, :], (self.data.img_resolution, self.data.img_resolution)) >
-                      torch.rand(self.data.img_resolution, self.data.img_resolution)).detach().numpy(),
-                     cmap='binary')
-        ax[2].set_xticks([], [])
-        ax[2].set_yticks([], [])
-        ax[2].set_title('sample')
-        ax[3].imshow((torch.reshape(samples[0, 2, :], (self.data.img_resolution, self.data.img_resolution)) >
-                      torch.rand(self.data.img_resolution, self.data.img_resolution)).detach().numpy(),
-                     cmap='binary')
-        ax[3].set_xticks([], [])
-        ax[3].set_yticks([], [])
-        ax[3].set_title('sample')
-        ax[4].imshow((torch.reshape(samples[0, 3, :], (self.data.img_resolution, self.data.img_resolution)) >
-                      torch.rand(self.data.img_resolution, self.data.img_resolution)).detach().numpy(),
-                     cmap='binary')
-        ax[4].set_xticks([], [])
-        ax[4].set_yticks([], [])
-        ax[4].set_title('sample')
+        reconstructions = self.pfNet(self.z_mean[:4])
+
+        for col in range(4):
+            # reconstructions
+            im0 = ax[0][col].imshow(torch.reshape(reconstructions[col],
+                                                  (self.data.img_resolution,
+                                                   self.data.img_resolution)).detach().numpy(),
+                                    cmap='gray_r', vmin=0, vmax=1)
+            ax[0][col].set_xticks([], [])
+            ax[0][col].set_yticks([], [])
+            ax[0][col].set_title('reconstruction sample ' + str(col))
+
+            # training data
+            im1 = ax[1][col].imshow(torch.reshape(self.data.microstructure_image[col],
+                                                  (self.data.img_resolution,
+                                                   self.data.img_resolution)).detach().numpy(),
+                                    cmap='gray_r', vmin=0, vmax=1)
+            ax[1][col].set_xticks([], [])
+            ax[1][col].set_yticks([], [])
+            ax[1][col].set_title('traning sample ' + str(col))
+        cbar_ax = fig.add_axes([0.92, .108, 0.01, 0.77])
+        fig.colorbar(im0, cax=cbar_ax)
+        plt.show()
+
+    def plot_generated_microstructures(self):
+        """
+        Generates microstructures via z ~ p(z), lambdaf ~ pfNet(z)
+        """
+        z = torch.randn(size=(4, self.dim_z))
+        lambdaf_samples = self.pfNet(z)
+
+        fig, ax = plt.subplots(1, 4)
+        figManager = plt.get_current_fig_manager()
+        figManager.window.showMaximized()
+
+        for col in range(4):
+            im = ax[col].imshow(torch.reshape(lambdaf_samples[col],
+                                              (self.data.img_resolution,
+                                               self.data.img_resolution)).detach().numpy(),
+                                cmap='gray_r', vmin=0, vmax=1)
+            ax[col].set_xticks([], [])
+            ax[col].set_yticks([], [])
+            ax[col].set_title('generated sample ' + str(col))
+
+        cbar_ax = fig.add_axes([0.92, .325, 0.01, 0.34])
+        fig.colorbar(im, cax=cbar_ax)
+        plt.show()
 
 
 class PcfNet(nn.Module):
@@ -427,10 +436,8 @@ class PcNet(nn.Module):
     def __init__(self, dim_z, rom_n_cells):
         super(PcNet, self).__init__()
         self.fc0 = nn.Linear(dim_z, rom_n_cells)
-        # self.ac0 = nn.Softplus(beta=1e-1)
 
     def forward(self, z):
-        eps = 1e-8
         x = self.fc0(z)
         return x
 

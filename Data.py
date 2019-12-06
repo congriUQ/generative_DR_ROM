@@ -66,6 +66,8 @@ class StokesData(Data):
         # Convention: supervised samples first, then unsupervised samples
         self.microstructure_image = torch.zeros(self.n_supervised_samples + self.n_unsupervised_samples,
                                                 self.img_resolution**2, dtype=torch.bool)
+        self.microstructure_image_inverted = torch.zeros(self.n_supervised_samples + self.n_unsupervised_samples,
+                                                self.img_resolution ** 2, dtype=torch.bool)
 
     def set_path_name(self):
         assert len(self.path) == 0, 'Data path already set'
@@ -202,13 +204,16 @@ class StokesData(Data):
         # self.microstructure_image = self.microstructure_image.type(torch.long)
 
     def reshape_microstructure_image(self):
-        # Reshapes flattened input data to 2D image of img_resolution x img_resolution
-        # Should be a tensor ox shape (batchsize x channels x nPixelsH x nPixelsW)
+        """
+        Reshapes flattened input data to 2D image of img_resolution x img_resolution
+        Should be a tensor ox shape (batchsize x channels x nPixelsH x nPixelsW)
+        """
         tmp = torch.zeros(self.n_supervised_samples + self.n_unsupervised_samples, 1,
                           self.img_resolution, self.img_resolution, dtype=self.dtype)
         for i in range(self.n_supervised_samples + self.n_unsupervised_samples):
             tmp[i, 0, :, :] = torch.reshape(self.microstructure_image[i], (self.img_resolution, self.img_resolution))
         self.microstructure_image = tmp
+        self.microstructure_image_inverted = 1.0 - tmp  # do once for performance
 
     # def state_dict(self):
     #     state_dict = {'dtype': self.dtype,

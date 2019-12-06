@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser(description='Script to train the model. First i
                                              ' second input is number of unsupervised samples')
 parser.add_argument(action="store", dest="n_supervised", type=int)
 parser.add_argument(action="store", dest="n_unsupervised", type=int)
+parser.add_argument(action="store", dest="dim_z", type=int)
 parsed_args = parser.parse_args()
 
 # Some parameters
@@ -61,9 +62,9 @@ trainingData.reshape_microstructure_image()
 
 # define rom
 rom = ROM.ROM(mesh, K, rhs, trainingData.output_resolution**2)
-model = gs.GenerativeSurrogate(rom, trainingData)
+model = gs.GenerativeSurrogate(rom, trainingData, dim_z=parsed_args.dim_z)
 
-model.fit(n_steps=400, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
+model.fit(n_steps=2, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
           z_iterations=25, with_precisions=False)
 model.fit(n_steps=int(1e6), save_iterations=10, thetac_iterations=5000, thetaf_iterations=5, z_iterations=25,
           with_precisions=True)

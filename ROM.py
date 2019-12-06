@@ -41,7 +41,7 @@ class ROM:
 
     def solve(self, lmbda):
         # lmbda is a 1D numpy array of !positive! conductivities/permeabilities
-        lmbda = PETSc.Vec().createWithArray(lmbda)
+        lmbda = PETSc.Vec().createWithArray(lmbda + 1e-12)
         self.stiffnessMatrix.assemble(lmbda)
         self.rhs.assemble(lmbda)
         # self.stiffnessMatrix.solver.setOperators(self.stiffnessMatrix.matrix)
@@ -86,8 +86,10 @@ class ROM:
             def forward(ctx, lmbda):
                 # lmbda is a torch.tensor with requires_grad=True
                 # lmbda are !positive! diffusivities
-
-                self.solve(lmbda.detach().numpy())
+                lmbda = lmbda.detach().numpy()
+                # for stability
+                lmbda[lmbda > 1e12] = 1e12
+                self.solve(lmbda)
 
                 # scatter essential boundary conditions
                 self.set_full_solution()

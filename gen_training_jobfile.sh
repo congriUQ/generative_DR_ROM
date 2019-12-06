@@ -1,11 +1,12 @@
 # Script that generates and submits a job file to train semi-supervised Stokes flow model
-N_SUPERVISED=32
-N_UNSUPERVISED=1024
+N_SUPERVISED=16
+N_UNSUPERVISED=2048
+DIM_Z=50
 #Set up file paths
 DATESTR=`date +%m-%d-%H-%M-%N`	#datestring for jobfolder name
 PROJECTDIR="/home/constantin/python/projects/generative_DR_ROM"
 # Set JOBNAME by hand for every job!
-JOBNAME="train_supervised=${N_SUPERVISED}_unsupervied=${N_UNSUPERVISED}_${DATESTR}"
+JOBNAME="train_supervised=${N_SUPERVISED}_unsupervied=${N_UNSUPERVISED}_dim_z=${DIM_Z}_${DATESTR}"
 JOBDIR="/home/constantin/python/jobs/$JOBNAME"
 JOBSCRIPT="${JOBDIR}/generativeSurrogate.py"
 
@@ -29,7 +30,7 @@ echo "#!/bin/bash" >> ./job_file.sh
 echo "#SBATCH --job-name=${JOBNAME}" >> ./job_file.sh
 echo "#SBATCH --partition batch_SNB,batch_SKL" >> ./job_file.sh
 echo "#SBATCH --output=/home/constantin/OEfiles/${JOBNAME}.%j.out" >> ./job_file.sh
-echo "#SBATCH --mincpus=16" >> ./job_file.sh
+echo "#SBATCH --mincpus=24" >> ./job_file.sh
 echo "#SBATCH --mail-type=ALL" >> ./job_file.sh
 echo "#SBATCH --mail-user=mailscluster@gmail.com " >> ./job_file.sh
 echo "#SBATCH --time=1000:00:00" >> ./job_file.sh
@@ -38,7 +39,7 @@ echo "#SBATCH --time=1000:00:00" >> ./job_file.sh
 echo "source /home/constantin/.bashrc" >> ./job_file.sh
 echo "conda activate genDRROM" >> ./job_file.sh
 #echo "while true; do" >> ./job_file.sh
-echo "python -Ou ./generativeSurrogate.py ${N_SUPERVISED} ${N_UNSUPERVISED}" >> ./job_file.sh
+echo "python -Ou ./generativeSurrogate.py ${N_SUPERVISED} ${N_UNSUPERVISED} ${DIM_Z}" >> ./job_file.sh
 #echo "done" >> ./job_file.sh
 echo "" >> job_file.sh
 
