@@ -33,12 +33,14 @@ class GenerativeSurrogate:
             self.dim_z = dim_z
             self.z_mean = torch.randn(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
                                       self.dim_z, requires_grad=True)
-            self.lr_z = 1e-3
-            self.zOpt = optim.Adam([self.z_mean], lr=self.lr_z)
+            self.lr_z = 1e-1
+            self.zOpt = optim.Adam([self.z_mean], lr=self.lr_z, betas=(.3, .5))
+            self.zOptSched = optim.lr_scheduler.ReduceLROnPlateau(self.zOpt, factor=.2, verbose=True)
             self.batch_size_z = min(self.data.n_unsupervised_samples, 128)
 
             self.pfNet = PfNet(self.dim_z, self.data.img_resolution**2)
-            self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-3)
+            self.pfOpt = optim.Adam(self.pfNet.parameters(), lr=1e-2)
+            self.pfOptSched = optim.lr_scheduler.ReduceLROnPlateau(self.zOpt, factor=.2, verbose=True, min_lr=1e-9)
             self.batch_size_N_thetaf = min(self.data.n_supervised_samples + self.data.n_unsupervised_samples, 512)
 
             # so far no batched evaluation implemented. EXTEND THIS!!
@@ -47,10 +49,11 @@ class GenerativeSurrogate:
 
             self.pcNet = PcNet(self.dim_z, rom.mesh.n_cells)
             self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
+            self.thetacSched = optim.lr_scheduler.ReduceLROnPlateau(self.pcOpt, factor=.2, verbose=True, min_lr=1e-9)
             self.tauc = torch.ones(self.rom.mesh.n_cells)
             self.log_lambdac_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells,
                                                 requires_grad=True)
-            self.log_lambdac_mean.data = -7.0 * self.log_lambdac_mean.data
+            self.log_lambdac_mean.data = -10.0 * self.log_lambdac_mean.data
 
             # Change for non unit square domains!!
             xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
@@ -58,8 +61,12 @@ class GenerativeSurrogate:
             X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
             X = torch.tensor(X)
             self.rom.mesh.get_interpolation_matrix(X)
-            self.lambdacOpt = optim.Adam([self.log_lambdac_mean], lr=1e-3)
+            self.lambdacOpt = optim.Adam([self.log_lambdac_mean], lr=1e-2)
+            self.lambdacOptSched = optim.lr_scheduler.ReduceLROnPlateau(self.lambdacOpt, factor=.1, verbose=True,
+                                                                        min_lr=1e-9, patience=15)
             self.taucf = torch.ones(self.data.output_resolution**2)
+
+            self.training_iterations = 0
 
             if __debug__:
                 current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -67,26 +74,42 @@ class GenerativeSurrogate:
             else:
                 self.writer = []
 
-    def fit(self, n_steps=100, z_iterations=10, thetaf_iterations=10, lambdac_iterations=100, thetac_iterations=100,
+    def fit(self, n_steps=100, z_iterations=10, thetaf_iterations=100, lambdac_iterations=100, thetac_iterations=100,
             save_iterations=20, with_precisions=True):
         """
         method to train the model with_precisions updates the precisions taucf and tauc
         """
         for s in range(n_steps):
-            print('step = ', s)
+            print('step = ', self.training_iterations)
             t = my.tic()
             # Only subsample unsupervised samples!
-            for k in range(z_iterations):
+            if self.training_iterations < 3:
+                lr_init = 3e-1
+            else:
+                lr_init = 5e-3
+            self.zOpt.param_groups[0]['lr'] = lr_init
+            z_iter = 0
+            while z_iter < z_iterations and self.zOpt.param_groups[0]['lr'] > 1e-3 * lr_init:
                 # batch_samples_z = torch.multinomial(torch.ones(self.data.n_unsupervised_samples), self.batch_size_z)\
                 #                   + self.data.n_supervised_samples
                 batch_samples_z = None      # we currently use all z samples
-                self.z_step(batch_samples_z, k)
+                self.z_step(batch_samples_z, z_iter)
+                z_iter += 1
             t = my.toc(t, 'z step')
 
-            for k in range(thetaf_iterations):
+            thetaf_iter = 0
+            if self.training_iterations < 3:
+                lr_init = 1e-1
+            elif self.training_iterations < 5:
+                lr_init = 5e-3
+            else:
+                lr_init = 5e-4
+            self.pfOpt.param_groups[0]['lr'] = lr_init
+            while thetaf_iter < thetaf_iterations and self.pfOpt.param_groups[0]['lr'] > 2e-4 * lr_init:
                 batch_samples_thetaf = torch.multinomial(torch.ones(
                     self.data.n_supervised_samples + self.data.n_unsupervised_samples), self.batch_size_N_thetaf)
-                self.thetaf_step(batch_samples_thetaf, k)
+                self.thetaf_step(batch_samples_thetaf, thetaf_iter)
+                thetaf_iter += 1
             t = my.toc(t, 'thetaf step')
 
             if self.data.n_supervised_samples:
@@ -96,8 +119,13 @@ class GenerativeSurrogate:
                     #                                           self.batch_size_N_lambdac)
                     print('sample == ', k)
                     batch_samples_lambdac = k
-                    for m in range(lambdac_iterations):
-                        self.lambdac_step(batch_samples_lambdac, m)
+                    if s < 3:
+                        lr_init = 1e-2
+                        self.lambdacOpt.param_groups[0]['lr'] = lr_init
+                    lambdac_iter = 0
+                    while lambdac_iter < lambdac_iterations and self.lambdacOpt.param_groups[0]['lr'] > 1e-4 * lr_init:
+                        self.lambdac_step(batch_samples_lambdac, lambdac_iter)
+                        lambdac_iter += 1
                 t = my.toc(t, 'lambdac step')
 
                 if with_precisions:
@@ -109,10 +137,19 @@ class GenerativeSurrogate:
                         self.taucf = torch.tensor(self.data.n_supervised_samples, dtype=self.dtype) / \
                                                             torch.sum((uf_pred - self.data.P) ** 2 + eps, dim=0)
 
-                for k in range(thetac_iterations):
+                thetac_iter = 0
+                if self.training_iterations < 3:
+                    lr_init = 1e-1
+                elif self.training_iterations < 5:
+                    lr_init = 5e-3
+                else:
+                    lr_init = 5e-4
+                self.pcOpt.param_groups[0]['lr'] = lr_init
+                while thetac_iter < thetac_iterations and self.pcOpt.param_groups[0]['lr'] > 2e-4 * lr_init:
                     batch_samples_thetac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
                                                              self.batch_size_N_thetac)
-                self.thetac_step(batch_samples_thetac, k)
+                    self.thetac_step(batch_samples_thetac, thetac_iter)
+                    thetac_iter += 1
                 my.toc(t, 'thetac step')
 
                 if with_precisions:
@@ -121,22 +158,32 @@ class GenerativeSurrogate:
                         self.tauc = torch.tensor(self.batch_size_N_thetac, dtype=self.dtype) / \
                                     torch.sum((log_lambdac_pred.squeeze() - self.log_lambdac_mean) ** 2, dim=0)
 
-            if (s + 1) % save_iterations == 0:
+            if (self.training_iterations + 1) % save_iterations == 0:
                 # + 1 to not save in the very first iteration
                 print('Saving model...')
                 self.save()
                 print('...saving done.')
+            self.training_iterations += 1
 
-    def predict(self, testData, z_iterations=1000):
+    def predict(self, testData, max_iterations=1000):
         # method to predict from the model for a certain set of input samples packaged in a StokesData object testData
         # Z holds the latent z representations of the inputs lambdaf
-        Z = torch.randn(testData.n_unsupervised_samples, self.dim_z, requires_grad=True)
 
-        zOptPredict = optim.Adam([Z], lr=1e-1)
-        zOptSched = optim.lr_scheduler.ReduceLROnPlateau(zOptPredict, factor=.7, verbose=True)
-        # Set proper convergence criterion instead of fixed steps!
-        for step in range(z_iterations):
+        # Initialize Z to mean of training set
+        Z = torch.zeros(testData.n_unsupervised_samples, self.dim_z, requires_grad=True)
+        Ztmp = torch.mean(self.z_mean, dim=0)
+        Ztmp = Ztmp.unsqueeze(0)
+        Z.data = Ztmp.repeat((testData.n_unsupervised_samples, 1)).data
+
+        # Take same learning rate as was used for training
+        zOptPredict = optim.Adam([Z], lr=3e-1, betas=(.7, .9))
+        lr_init = zOptPredict.param_groups[0]['lr']
+        zOptSched = optim.lr_scheduler.ReduceLROnPlateau(zOptPredict, factor=.2, patience=70, verbose=True)
+
+        step = 0
+        while step < max_iterations and zOptPredict.param_groups[0]['lr'] > 1e-8 * lr_init:
             self.z_prediction_step(Z, testData, zOptPredict, zOptSched, step=step)
+            step += 1
 
         log_lambdac_mean = self.pcNet(Z)
         # Add noise here...
@@ -233,6 +280,7 @@ class GenerativeSurrogate:
         loss.backward()
         self.pfOpt.step()
         self.pfOpt.zero_grad()
+        self.pfOptSched.step(loss)
 
     def thetac_step(self, batch_samples, step=1):
         # One training step for pc
@@ -254,6 +302,7 @@ class GenerativeSurrogate:
         loss.backward()
         self.pcOpt.step()
         self.pcOpt.zero_grad()
+        self.thetacSched.step(loss)
 
     def lambdac_step(self, batch_samples, step=1):
         # One training step for pcf
@@ -267,7 +316,7 @@ class GenerativeSurrogate:
         loss = self.loss_lambdac(uf_pred, log_lambdac_pred, batch_samples)
         assert torch.isfinite(loss)
         loss.backward()
-        if step % 250 == 0:
+        if (step % 400) == 0:
             print('loss_lambda_c = ', loss.item())
 
         # if __debug__:
@@ -276,6 +325,7 @@ class GenerativeSurrogate:
         #     self.writer.close()
 
         self.lambdacOpt.step()
+        self.lambdacOptSched.step(loss)
 
     def z_step(self, batch_samples, step=1):
         # optimize latent distribution p(lambda_c^n, z^n) for point estimates
@@ -288,6 +338,7 @@ class GenerativeSurrogate:
 
         self.zOpt.step()
         self.zOpt.zero_grad()
+        self.zOptSched.step(loss_z)
 
     def z_prediction_step(self, Z, testData, zOptPredict, zOptSched, step=1):
         loss_z = self.loss_z_prediction(Z, testData)

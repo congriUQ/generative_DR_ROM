@@ -33,6 +33,7 @@ data/
 runs/
 */__pycache__/*
 __pycache__/*
+backup_envs/
 
 # environments
 *.yaml
