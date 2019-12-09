@@ -51,9 +51,20 @@ class GenerativeSurrogate:
             self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
             self.thetacSched = optim.lr_scheduler.ReduceLROnPlateau(self.pcOpt, factor=.2, verbose=True, min_lr=1e-9)
             self.tauc = torch.ones(self.rom.mesh.n_cells)
-            self.log_lambdac_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells,
-                                                requires_grad=True)
-            self.log_lambdac_mean.data = -10.0 * self.log_lambdac_mean.data
+            # self.log_lambdac_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells,
+            #                                     requires_grad=True)
+            # self.log_lambdac_mean.data = -10.0 * self.log_lambdac_mean.data
+            self.log_lambdac_mean = []
+            for n in range(self.data.n_supervised_samples):
+                log_lambdac_init = torch.ones(self.rom.mesh.n_cells, requires_grad=True)
+                log_lambdac_init.data = -10.0 * log_lambdac_init.data
+                log_lambdac_pred = self.pcNet(self.z_mean[n, :])
+                self.log_lambdac_mean.append(LogLambdacParam(self.data.P[n, :], log_lambdac_pred,
+                                                             init_value=log_lambdac_init))
+                self.log_lambdac_mean[-1].optimizer = optim.Adam([self.log_lambdac_mean[-1].value], lr=1e-2)
+                self.log_lambdac_mean[-1].scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    self.log_lambdac_mean[-1].optimizer, factor=.1, verbose=True, min_lr=1e-9, patience=15)
+                self.log_lambdac_mean[-1].finescale_output = self.data.P[n, :]
 
             # Change for non unit square domains!!
             xx, yy = np.meshgrid(np.linspace(0, 1, self.data.output_resolution),
@@ -61,9 +72,9 @@ class GenerativeSurrogate:
             X = np.concatenate((np.expand_dims(xx.flatten(), axis=1), np.expand_dims(yy.flatten(), axis=1)), axis=1)
             X = torch.tensor(X)
             self.rom.mesh.get_interpolation_matrix(X)
-            self.lambdacOpt = optim.Adam([self.log_lambdac_mean], lr=1e-2)
-            self.lambdacOptSched = optim.lr_scheduler.ReduceLROnPlateau(self.lambdacOpt, factor=.1, verbose=True,
-                                                                        min_lr=1e-9, patience=15)
+            # self.lambdacOpt = optim.Adam(self.log_lambdac_mean.split, lr=1e-2)
+            # self.lambdacOptSched = optim.lr_scheduler.ReduceLROnPlateau(self.lambdacOpt, factor=.1, verbose=True,
+            #                                                             min_lr=1e-9, patience=15)
             self.taucf = torch.ones(self.data.output_resolution**2)
 
             self.training_iterations = 0
@@ -114,18 +125,25 @@ class GenerativeSurrogate:
 
             if self.data.n_supervised_samples:
                 # Don't train supervised part if there is no supervised data. Instead, train autoencoder only.
+                # for k in range(self.data.n_supervised_samples):
+                #     # batch_samples_lambdac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
+                #     #                                           self.batch_size_N_lambdac)
+                #     print('sample == ', k)
+                #     batch_samples_lambdac = k
+                #     if s < 3:
+                #         lr_init = 1e-2
+                #     else:
+                #         lr_init = 1e-4
+                #     self.lambdacOpt.param_groups[0]['lr'] = lr_init
+                #     lambdac_iter = 0
+                #     while lambdac_iter < lambdac_iterations and self.lambdacOpt.param_groups[0]['lr'] > 1e-4 * lr_init:
+                #         self.lambdac_step(batch_samples_lambdac, lambdac_iter)
+                #         lambdac_iter += 1
                 for k in range(self.data.n_supervised_samples):
-                    # batch_samples_lambdac = torch.multinomial(torch.ones(self.data.n_supervised_samples),
-                    #                                           self.batch_size_N_lambdac)
                     print('sample == ', k)
-                    batch_samples_lambdac = k
-                    if s < 3:
-                        lr_init = 1e-2
-                        self.lambdacOpt.param_groups[0]['lr'] = lr_init
-                    lambdac_iter = 0
-                    while lambdac_iter < lambdac_iterations and self.lambdacOpt.param_groups[0]['lr'] > 1e-4 * lr_init:
-                        self.lambdac_step(batch_samples_lambdac, lambdac_iter)
-                        lambdac_iter += 1
+                    self.log_lambdac_mean[k].log_lambdac_pred = self.pcNet(self.z_mean[k, :])
+                    self.log_lambdac_mean[k].converge(self, self.data.n_supervised_samples, mode=k)
+
                 t = my.toc(t, 'lambdac step')
 
                 if with_precisions:
@@ -513,9 +531,110 @@ class PfNet(nn.Module):
         return out
 
 
+class ModelParam:
+    """
+    Class for a certain parameter of the model, i.e., thetaf, thetac, log_lambdac_mean, and z_mean
+    """
+    def __init__(self, init_value=None, batch_size=128):
+        self.value = init_value                                 # Torch tensor of parameter values
+        self.lr_init = [3e-2, 1e-2, 3e-3, 1e-3, 3e-4, 1e-4]     # Initial learning rate in every convergence iteration
+        self.optimizer = None                                   # needs to be specified later
+        self.scheduler = None
+        self.batch_size = batch_size                            # the batch size for optimization of the parameter
+        self.convergence_iteration = 0                          # iterations with full convergence
+        self.step_iteration = 0                                 # iterations in the current optimization
+        self.max_iter = 100
+        self.lr_drop_factor = 1e-5                              # lr can drop by this factor until convergence
+        self.eps = 1e-12                                        # for stability of log etc.
+
+    def loss(self, **kwargs):
+        """
+        The loss function pertaining to the parameter
+        Override this!
+        """
+        raise Exception('loss function not implemented')
+
+    def step(self, **kwargs):
+        """
+        Performs a single optimization iteration
+        Override this!
+        """
+        raise Exception('step function not implemented')
+
+    def draw_batch_samples(self, n_samples_tot, mode='shuffle'):
+        """
+        Draws a batch sample. n_samples_tot is the size of the data set
+        """
+        if mode == 'shuffle':
+            while True:
+                yield torch.multinomial(torch.ones(n_samples_tot), self.batch_size)
+        elif mode == 'iter':
+            k = 0
+            while True:
+                k += 1
+                yield torch.tensor(range(k*self.batch_size, (k + 1)*self.batch_size)) % n_samples_tot
+        elif isinstance(mode, int):
+            while True:
+                yield mode
+
+    def converge(self, model, n_samples_tot, mode='shuffle'):
+        """
+        Runs optimization of parameter till a convergence criterion is met
+        """
+        batch_gen = self.draw_batch_samples(n_samples_tot, mode)
+        while self.step_iteration < self.max_iter and self.optimizer.param_groups[0]['lr'] > \
+                self.lr_drop_factor * self.lr_init[min(self.convergence_iteration, len(self.lr_init))]:
+            batch_samples = next(batch_gen)
+            self.step(model, batch_samples)
+            self.step_iteration += 1
+        self.convergence_iteration += 1
+        self.step_iteration = 0
 
 
+class LogLambdacParam(ModelParam):
+    """
+    Class pertaining to the log_lambdac_mean parameters
+    """
 
+    def __init__(self, finescale_output, log_lambdac_pred, init_value=None):
+        super().__init__(init_value=init_value, batch_size=1)
+        self.finescale_output = finescale_output
+        self.log_lambdac_pred = log_lambdac_pred        # needs to be set before every convergence iteration
+
+    def loss(self, model, uf_pred):
+        """
+        This is joint loss of pc and pcf for lambda_c!
+        model:  GenerativeSurrogate object
+        """
+        diff_f = self.finescale_output - uf_pred
+        loss_lambdac = torch.dot((model.taucf * diff_f).flatten(), diff_f.flatten())
+        diff_c = self.log_lambdac_pred - self.value
+        loss_thetac = torch.dot((model.tauc * diff_c).flatten(), diff_c.flatten())
+        return loss_lambdac + loss_thetac
+
+    def step(self, model, batch_samples):
+        """
+        One training step for log_lambdac_mean
+        Needs to be updated to samples of lambda_c from approximate posterior
+        model:  GenerativeSurrogate object
+        """
+        self.optimizer.zero_grad()
+        uf_pred = model.rom_autograd(torch.exp(self.value) + self.eps)
+        assert torch.all(torch.isfinite(uf_pred))
+        loss = self.loss(model, uf_pred)
+        assert torch.isfinite(loss)
+        loss.backward(retain_graph=True)
+        if (self.step_iteration % 100) == 0:
+            print('loss_lambda_c = ', loss.item())
+
+        # if __debug__:
+        #     # print('loss_lambdac = ', loss)
+        #     self.writer.add_scalar('Loss/train_pcf', loss)
+        #     self.writer.close()
+
+        self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step(loss)
 
 
 

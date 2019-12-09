@@ -64,7 +64,18 @@ trainingData.reshape_microstructure_image()
 rom = ROM.ROM(mesh, K, rhs, trainingData.output_resolution**2)
 model = gs.GenerativeSurrogate(rom, trainingData, dim_z=parsed_args.dim_z)
 
-model.fit(n_steps=2, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
+# optimize lambdac first
+lambdac_iterations = 3e4
+for k in range(model.data.n_supervised_samples):
+    print('sample = ', k)
+    lr_init = 1e-2
+    model.lambdacOpt.param_groups[0]['lr'] = lr_init
+    lambdac_iter = 0
+    while lambdac_iter < lambdac_iterations and model.lambdacOpt.param_groups[0]['lr'] > 1e-4 * lr_init:
+        model.lambdac_step(k, lambdac_iter)
+        lambdac_iter += 1
+
+model.fit(n_steps=30, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
           z_iterations=25, with_precisions=False)
 model.fit(n_steps=int(1e6), save_iterations=10, thetac_iterations=5000, thetaf_iterations=5, z_iterations=25,
           with_precisions=True)
