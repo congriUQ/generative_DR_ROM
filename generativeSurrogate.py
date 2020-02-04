@@ -65,19 +65,13 @@ rom = ROM.ROM(mesh, K, rhs, trainingData.output_resolution**2)
 model = gs.GenerativeSurrogate(rom, trainingData, dim_z=parsed_args.dim_z)
 
 # optimize lambdac first
-lambdac_iterations = 3e4
-for k in range(model.data.n_supervised_samples):
-    print('sample = ', k)
-    lr_init = 1e-2
-    model.lambdacOpt.param_groups[0]['lr'] = lr_init
-    lambdac_iter = 0
-    while lambdac_iter < lambdac_iterations and model.lambdacOpt.param_groups[0]['lr'] > 1e-4 * lr_init:
-        model.lambdac_step(k, lambdac_iter)
-        lambdac_iter += 1
+for n in range(model.data.n_supervised_samples):
+    print('sample == ', n)
+    model.log_lambdac_mean[n].max_iter = 3e4
+    model.log_lambdac_mean[n].converge(model, model.data.n_supervised_samples, mode=n)
 
-model.fit(n_steps=30, save_iterations=10, lambdac_iterations=500, thetac_iterations=5000, thetaf_iterations=5,
-          z_iterations=25, with_precisions=False)
-model.fit(n_steps=int(1e6), save_iterations=10, thetac_iterations=5000, thetaf_iterations=5, z_iterations=25,
+model.fit(n_steps=50, with_precisions=False, z_iterations=200, thetac_iterations=10000, lambdac_iterations=500)
+model.fit(n_steps=int(1e6), save_iterations=5, thetac_iterations=5000, thetaf_iterations=50, z_iterations=100,
           with_precisions=True)
 
 

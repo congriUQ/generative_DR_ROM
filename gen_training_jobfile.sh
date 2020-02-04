@@ -1,7 +1,7 @@
 # Script that generates and submits a job file to train semi-supervised Stokes flow model
-N_SUPERVISED=16
-N_UNSUPERVISED=2048
-DIM_Z=50
+N_SUPERVISED=128
+N_UNSUPERVISED=1024
+DIM_Z=10
 #Set up file paths
 DATESTR=`date +%m-%d-%H-%M-%N`	#datestring for jobfolder name
 PROJECTDIR="/home/constantin/python/projects/generative_DR_ROM"
