@@ -54,6 +54,7 @@ class GenerativeSurrogate:
             self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
             self.thetacSched = optim.lr_scheduler.ReduceLROnPlateau(self.pcOpt, factor=.2, patience=1000, verbose=True)
             self.tauc = torch.ones(self.rom.mesh.n_cells)
+
             # self.log_lambdac_mean = torch.ones(self.data.n_supervised_samples, self.rom.mesh.n_cells,
             #                                     requires_grad=True)
             # self.log_lambdac_mean.data = -10.0 * self.log_lambdac_mean.data
@@ -85,9 +86,10 @@ class GenerativeSurrogate:
 
             self.training_iterations = 0
 
-            if __debug__:
+            self.writeParams = False
+            if __debug__ and self.writeParams:
                 current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-                # self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
+                self.writer = SummaryWriter('runs/gendrrom/' + current_time, flush_secs=5)        # for tensorboard
             else:
                 self.writer = None
 
@@ -273,13 +275,14 @@ class GenerativeSurrogate:
         loss_thetac = torch.dot((self.tauc * diff_c).flatten(), diff_c.flatten())
         return loss_lambdac + loss_thetac
 
-    def loss_z(self, batch_samples):
+    def loss_z_delta(self, batch_samples):
+        # Loss w.r.t. z assuming q(z) = delta(z)
         # ATTENTION: actually all samples should be chosen as batch size
         # negative latent log distribution over all z's
         eps = 1e-16
-        pred_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+        pred_lambda_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
 
-        diff = self.log_lambdac_mean_tensor - pred_c
+        diff = self.log_lambdac_mean_tensor - pred_lambda_c
         out = .5 * torch.dot((self.tauc * diff).flatten(), diff.flatten())
 
         # for the supervised samples, take all
@@ -300,6 +303,12 @@ class GenerativeSurrogate:
                            torch.log(1.0 - lambdaf_pred + eps).flatten())) \
                             + .5 * torch.sum(self.z_mean[self.data.n_supervised_samples:, :] ** 2)
         return out
+
+    def log_q_z_emp(self, z):
+        # TO BE DONE
+        pred_lambda_c = self.pcNet(z)
+        diff = self.log_lambdac_mean_tensor - pred_lambda_c
+        out = .5 * torch.dot((self.tauc * diff).flatten(), diff.flatten())
 
     def loss_z_prediction(self, Z, testData):
         # negative latent log distribution over all z's
@@ -325,7 +334,7 @@ class GenerativeSurrogate:
         if step % 5 == 0:
             print('loss_f = ', loss.item())
 
-        if __debug__:
+        if __debug__ and self.writeParams:
             # print('loss_thetaf = ', loss)
             self.writer.add_scalar('Loss/train_thetaf', loss)
             self.writer.close()
@@ -347,7 +356,7 @@ class GenerativeSurrogate:
         if step % 50 == 0:
             print('loss_c = ', loss.item())
 
-        if __debug__:
+        if __debug__ and self.writeParams:
             # print('loss_thetac = ', loss)
             self.writer.add_scalar('Loss/train_pc', loss)
             self.writer.close()
@@ -384,7 +393,7 @@ class GenerativeSurrogate:
     def z_step(self, batch_samples, step=1):
         # optimize latent distribution p(lambda_c^n, z^n) for point estimates
 
-        loss_z = self.loss_z(batch_samples)
+        loss_z = self.loss_z_delta(batch_samples)
         assert torch.isfinite(loss_z)
         loss_z.backward(retain_graph=True)
         if step % 20:
@@ -480,7 +489,7 @@ class GenerativeSurrogate:
         self.log_lambdac_mean_tensor = state_dict['log_lambdac_mean_tensor']
         self.taucf = state_dict['taucf']
         self.training_iterations = state_dict['training_iterations']
-        if __debug__:
+        if __debug__ and self.writeParams:
             try:
                 self.writer = state_dict['writer']
             except KeyError:

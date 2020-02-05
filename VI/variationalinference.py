@@ -84,33 +84,6 @@ class DiagGaussianSVI:
                 iter += 1
 
 
-###########################################################################
-# Tests
-###########################################################################
-import unittest
-
-
-class SVITestCase(unittest.TestCase):
-
-    def gauss2gauss_1d(self):
-        sigma_e = 2 * torch.ones(1)
-        mu_e = -3 * torch.ones(1)
-        def log_emp_dist(x):
-            return .5 * (1 / sigma_e ** 2) * (x - mu_e) ** 2
-
-        def log_emp_dist_grad(x):
-            return (x - mu_e) / sigma_e ** 2
-
-        svi = DiagGaussianSVI(log_emp_dist, log_emp_dist_grad, 1)
-        svi.fit()
-
-        print("True mean == ", mu_e)
-        print("SVI mean == ", svi.vi_mean)
-        print("True std == ", sigma_e)
-        print("SVI std == ", svi.vi_std)
-
-
-
 
 
 
