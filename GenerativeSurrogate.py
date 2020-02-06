@@ -15,7 +15,7 @@ import unittest
 
 # noinspection PyUnreachableCode
 class GenerativeSurrogate:
-    def __init__(self, rom=None, data=None, dim_z=20):
+    def __init__(self, rom=None, data=None, dim_z=20, dim_z_supervised=8):
         # rom is only allowed to be None if the model is loaded afterwards
         if rom is not None:
             self.dtype = torch.float32
@@ -32,6 +32,10 @@ class GenerativeSurrogate:
                 warnings.warn('No supervised training data. Train autoencoder only')
 
             self.dim_z = dim_z
+            self.dim_z_supervised = dim_z_supervised
+            assert self.dim_z >= self.dim_z_supervised, f"z-dimension {self.dim_z_supervised} for output" \
+                                                        f" reconstruction is larger than for input reconstruction" \
+                                                        f" {self.dim_z}"
             self.z_mean = torch.randn(self.data.n_supervised_samples + self.data.n_unsupervised_samples,
                                       self.dim_z, requires_grad=True)
             self.z_mean.data = 1e-2 * self.z_mean.data
@@ -50,7 +54,7 @@ class GenerativeSurrogate:
             self.batch_size_N_lambdac = min(self.data.n_supervised_samples, 1)
             self.batch_size_N_thetac = min(self.data.n_supervised_samples, 128)
 
-            self.pcNet = PcNet(self.dim_z, rom.mesh.n_cells)
+            self.pcNet = PcNet(self.dim_z_supervised, rom.mesh.n_cells)
             self.pcOpt = optim.Adam(self.pcNet.parameters(), lr=1e-3)
             self.thetacSched = optim.lr_scheduler.ReduceLROnPlateau(self.pcOpt, factor=.2, patience=1000, verbose=True)
             self.tauc = torch.ones(self.rom.mesh.n_cells)
@@ -63,7 +67,7 @@ class GenerativeSurrogate:
             for n in range(self.data.n_supervised_samples):
                 log_lambdac_init = torch.ones(self.rom.mesh.n_cells, requires_grad=True)
                 log_lambdac_init.data = -10.0 * log_lambdac_init.data
-                log_lambdac_pred = self.pcNet(self.z_mean[n, :])
+                log_lambdac_pred = self.pcNet(self.z_mean[n, :self.dim_z_supervised])
                 self.log_lambdac_mean.append(LogLambdacParam(self.data.P[n, :], log_lambdac_pred,
                                                              init_value=log_lambdac_init))
                 self.log_lambdac_mean[-1].optimizer = optim.Adam([self.log_lambdac_mean[-1].value], lr=1e-2)
@@ -165,7 +169,7 @@ class GenerativeSurrogate:
                 #         lambdac_iter += 1
                 for n in range(self.data.n_supervised_samples):
                     print('sample == ', n)
-                    self.log_lambdac_mean[n].log_lambdac_pred = self.pcNet(self.z_mean[n, :])
+                    self.log_lambdac_mean[n].log_lambdac_pred = self.pcNet(self.z_mean[n, :self.dim_z_supervised])
                     self.log_lambdac_mean[n].converge(self, self.data.n_supervised_samples, mode=n)
                     self.log_lambdac_mean_tensor[n, :] = self.log_lambdac_mean[n].value
 
@@ -197,7 +201,8 @@ class GenerativeSurrogate:
 
                 if with_precisions:
                     with torch.no_grad():
-                        log_lambdac_pred = self.pcNet(self.z_mean[:self.data.n_supervised_samples])
+                        log_lambdac_pred = \
+                            self.pcNet(self.z_mean[:self.data.n_supervised_samples, :self.dim_z_supervised])
                         self.tauc = torch.tensor(self.batch_size_N_thetac, dtype=self.dtype) / \
                                     torch.sum((log_lambdac_pred.squeeze() - self.log_lambdac_mean_tensor) ** 2, dim=0)
 
@@ -280,27 +285,27 @@ class GenerativeSurrogate:
         # ATTENTION: actually all samples should be chosen as batch size
         # negative latent log distribution over all z's
         eps = 1e-16
-        pred_lambda_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :])
+        pred_lambda_c = self.pcNet(self.z_mean[:self.data.n_supervised_samples, :self.dim_z_supervised])
 
         diff = self.log_lambdac_mean_tensor - pred_lambda_c
         out = .5 * torch.dot((self.tauc * diff).flatten(), diff.flatten())
 
         # for the supervised samples, take all
-        lambdaf_pred = self.pfNet(self.z_mean[:self.data.n_supervised_samples, :])
+        lambdaf_pred_supervised = self.pfNet(self.z_mean[:self.data.n_supervised_samples, :])
         # out += - ... for readability
         out += -(torch.dot(self.data.microstructure_image[:self.data.n_supervised_samples, :].flatten(),
-                           torch.log(lambdaf_pred + eps).flatten()) +
+                           torch.log(lambdaf_pred_supervised + eps).flatten()) +
                  torch.dot(self.data.microstructure_image_inverted[:self.data.n_supervised_samples, :].flatten(),
-                           torch.log(1.0 - lambdaf_pred + eps).flatten())) \
+                           torch.log(1.0 - lambdaf_pred_supervised + eps).flatten())) \
                + .5*torch.sum(self.z_mean[:self.data.n_supervised_samples, :]**2)
 
         # for the unsupervised samples, take only batch size. Only sample unsupervised samples!!
-        lambdaf_pred = self.pfNet(self.z_mean[self.data.n_supervised_samples:, :])
+        lambdaf_pred_unsupervised = self.pfNet(self.z_mean[self.data.n_supervised_samples:, :])
         # out += - ... for readability
         out += -(torch.dot(self.data.microstructure_image[self.data.n_supervised_samples:, :].flatten(),
-                           torch.log(lambdaf_pred + eps).flatten()) +
+                           torch.log(lambdaf_pred_unsupervised + eps).flatten()) +
                  torch.dot(self.data.microstructure_image_inverted[self.data.n_supervised_samples:, :].flatten(),
-                           torch.log(1.0 - lambdaf_pred + eps).flatten())) \
+                           torch.log(1.0 - lambdaf_pred_unsupervised + eps).flatten())) \
                             + .5 * torch.sum(self.z_mean[self.data.n_supervised_samples:, :] ** 2)
         return out
 
@@ -348,7 +353,7 @@ class GenerativeSurrogate:
         # One training step for pc
         # batch_samples are indices of the samples contained in the batch
         # This needs to be replaced by the (approximate) posterior on z!!
-        z = self.z_mean[batch_samples, :]
+        z = self.z_mean[batch_samples, :self.dim_z_supervised]
         z = z.unsqueeze(1)  # this is to store samples of z
         log_lambdac_pred = self.pcNet(z)
         loss = self.loss_thetac(log_lambdac_pred, batch_samples)
