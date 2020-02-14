@@ -401,6 +401,7 @@ class StiffnessMatrix:
         # note the permutation; this is for fast computation of gradients via adjoints
         self.glob_stiff_grad = torch.empty((mesh.n_eq, mesh.n_cells, mesh.n_eq))
         self.glob_stiff_stencil = None
+        self.glob_stiff_stencil_scipy = None
 
         # Stiffness sparsity pattern
         self.nnz = None             # number of nonzero components
@@ -414,6 +415,7 @@ class StiffnessMatrix:
 
         # Pre-allocations
         self.matrix = PETSc.Mat().createAIJ(size=(mesh.n_eq, mesh.n_eq), nnz=self.nnz)
+        self.matrix_torch = None
         # self.conductivity = PETSc.Vec().createSeq(mesh.n_cells)     # permeability/diffusivity vector
         self.assembly_vector = PETSc.Vec().createSeq(mesh.n_eq**2)      # For quick assembly with matrix vector product
 
@@ -473,14 +475,16 @@ class StiffnessMatrix:
             self.glob_stiff_grad[:, e, :] = torch.tensor(Ke_dense)
             glob_stiff_stencil[:, e] = Ke_dense.flatten(order='F')
 
-        glob_stiff_stencil = sps.csr_matrix(glob_stiff_stencil)
+        self.glob_stiff_stencil_scipy = sps.csr_matrix(glob_stiff_stencil)
         glob_stiff_stencil = PETSc.Mat().createAIJ(
-            size=glob_stiff_stencil.shape, csr=(glob_stiff_stencil.indptr,
-                                                glob_stiff_stencil.indices, glob_stiff_stencil.data))
+            size=glob_stiff_stencil.shape, csr=(self.glob_stiff_stencil_scipy.indptr,
+                                                self.glob_stiff_stencil_scipy.indices,
+                                                self.glob_stiff_stencil_scipy.data))
         glob_stiff_stencil.assemblyBegin()
         glob_stiff_stencil.assemblyEnd()
 
         self.glob_stiff_stencil = glob_stiff_stencil
+
 
     def find_sparsity_pattern(self):
         # Computes sparsity pattern of stiffness matrix/stiffness matrix vector for fast matrix assembly
@@ -506,19 +510,31 @@ class StiffnessMatrix:
         # Everytime the stiffness matrix changes, the solver operators need to be reset
         self.solver.setOperators(self.matrix)
 
+    def assemble_torch(self, x):
+        """
+        For batched computation
+        x is a torch tensor of permeabilities of shape batch_size x n_cells
+        """
+        self.matrix_torch = torch.tensor(np.moveaxis((self.glob_stiff_stencil_scipy @ x.squeeze().T.detach().numpy())
+                                                     .reshape(self.mesh.n_eq, self.mesh.n_eq, x.shape[0]), -1, 0),
+                                         dtype=self.mesh.dtype)
+
 
 class RightHandSide:
     # This is the finite element force vector
     def __init__(self, mesh):
         self.vector = PETSc.Vec().createSeq(mesh.n_eq)    # Force vector
+        self.vector_torch = None
         self.flux_boundary_condition = None
         self.source_field = None
         self.natural_rhs = PETSc.Vec().createSeq(mesh.n_eq)
+        self.natural_rhs_torch = None
         self.cells_with_essential_boundary = []    # precompute for performance
         self.find_cells_with_essential_boundary(mesh)
         # Use nnz = 0, PETSc will allocate  additional storage by itself
         self.rhs_stencil = PETSc.Mat().createAIJ(size=(mesh.n_eq, mesh.n_cells), nnz=0)
         self.rhs_stencil.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
+        self.rhs_stencil_torch = torch.zeros((mesh.n_eq, mesh.n_cells), dtype=mesh.dtype)
 
     def set_flux_boundary_condition(self, mesh, flux):
         # Contribution due to flux boundary conditions
@@ -666,6 +682,7 @@ class RightHandSide:
                         natural_rhs[vtx.equation_number] += self.source_field[v, e]
 
         self.natural_rhs.setValues(range(mesh.n_eq), natural_rhs)
+        self.natural_rhs_torch = torch.tensor(self.natural_rhs.getArray(), dtype=mesh.dtype).unsqueeze(1)
 
     def find_cells_with_essential_boundary(self, mesh):
         for cll in mesh.cells:
@@ -673,7 +690,7 @@ class RightHandSide:
                 self.cells_with_essential_boundary.append(cll.number)
 
     def set_rhs_stencil(self, mesh, stiffness_matrix):
-        rhs_stencil_np = np.zeros((mesh.n_eq, mesh.n_cells))
+        # rhs_stencil_np = np.zeros((mesh.n_eq, mesh.n_cells))
         for c in self.cells_with_essential_boundary:
             essential_boundary_values = np.zeros(4)
             for v, vtx in enumerate(mesh.cells[c].vertices):
@@ -683,19 +700,35 @@ class RightHandSide:
             loc_ess_bc = stiffness_matrix.loc_stiff_grad[c] @ essential_boundary_values
             for v, vtx in enumerate(mesh.cells[c].vertices):
                 if vtx.equation_number is not None:
-                    rhs_stencil_np[vtx.equation_number, c] -= loc_ess_bc[v]
+                    self.rhs_stencil_torch[vtx.equation_number, c] -= loc_ess_bc[v]
 
         # Assemble PETSc matrix from numpy
         for c in self.cells_with_essential_boundary:
             for vtx in mesh.cells[c].vertices:
                 if vtx.equation_number is not None:
-                    self.rhs_stencil.setValue(vtx.equation_number, c, rhs_stencil_np[vtx.equation_number, c])
+                    self.rhs_stencil.setValue(vtx.equation_number, c, self.rhs_stencil_torch[vtx.equation_number, c])
         self.rhs_stencil.assemblyBegin()
         self.rhs_stencil.assemblyEnd()
+
+    def expand_rhs_stencil_torch(self, batch_size):
+        """
+        Expands the rhs stencil to batch size
+        :param batch_size:
+        :return:
+        """
+        self.rhs_stencil_torch = self.rhs_stencil_torch.unsqueeze(0).expand(batch_size, -1, -1)
 
     def assemble(self, x):
         # x is a PETSc vector of conductivity/permeability
         self.rhs_stencil.multAdd(x, self.natural_rhs, self.vector)
+
+    def assemble_torch(self, x):
+        """
+        x is a batch_size x n_cells x 1 torch tensor of cell permeabilities
+        :param x:
+        :return:
+        """
+        self.vector_torch = self.natural_rhs_torch + torch.bmm(self.rhs_stencil_torch, x)
 
     def state_dict(self):
         return {'vector': self.vector.array,
