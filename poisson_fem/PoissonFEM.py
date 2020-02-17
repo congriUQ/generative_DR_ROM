@@ -30,6 +30,7 @@ class Mesh:
         self.scatter_matrix_torch = None
         # interpolation matrix for reconstruction in p_cf
         self.interpolation_matrix = None
+        self.interpolation_matrix_torch = None
         self.interpolation_matrix_sps = None
 
     def create_vertex(self, coordinates, globalVertexNumber=None, row_index=None, col_index=None):
@@ -96,7 +97,8 @@ class Mesh:
             else:
                 vtx.equation_number = equation_number
                 equation_number += 1
-        self.essential_solution_vector_torch = torch.tensor(self.essential_solution_vector.array, dtype=self.dtype)
+        self.essential_solution_vector_torch = \
+            torch.tensor(self.essential_solution_vector.array, dtype=self.dtype).unsqueeze(1)
         self.n_eq = equation_number
 
         self.set_scatter_matrix()
@@ -130,6 +132,7 @@ class Mesh:
                 W[:, glob_vertex_numbers[loc_vertex]] += shape_fun_values[loc_vertex]/isin_sum
 
         # Convert to PETSc sparse matrix for efficiency?
+        self.interpolation_matrix_torch = W
         W = sps.csr_matrix(W)
         self.interpolation_matrix = PETSc.Mat().createAIJ(size=W.shape, csr=(W.indptr, W.indices, W.data))
 
@@ -416,6 +419,7 @@ class StiffnessMatrix:
         # Pre-allocations
         self.matrix = PETSc.Mat().createAIJ(size=(mesh.n_eq, mesh.n_eq), nnz=self.nnz)
         self.matrix_torch = None
+        self.cholesky_L = None
         # self.conductivity = PETSc.Vec().createSeq(mesh.n_cells)     # permeability/diffusivity vector
         self.assembly_vector = PETSc.Vec().createSeq(mesh.n_eq**2)      # For quick assembly with matrix vector product
 

@@ -22,6 +22,7 @@ class GenerativeSurrogate:
 
             self.rom = rom
             self.rom_autograd = rom.get_autograd_fun() if rom is not None else None
+            self.rom_autograd_batched = rom.get_batched_autograd_fun()
 
             if data is None:
                 self.data = dta.StokesData()
